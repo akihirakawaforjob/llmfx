@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# runtime artifacts
+# 先頭の / はリポジトリ直下だけを指す。これが無いとソースパッケージの
+# llmfx/data/ まで除外されてしまう。
+/data/
+/out/
+*.sqlite
+*.sqlite3
+*.log

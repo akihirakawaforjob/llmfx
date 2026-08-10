@@ -1,0 +1,73 @@
+# 高リスク設定 — 月利 1.4 倍(+40%)を狙う場合の参考値
+#
+# ⚠️ 警告
+# この設定は 1 トレードあたりのリスクを 5% に引き上げています。
+# 20 連敗すれば資金は約 36% まで減り、実運用ではそれが起こり得ます。
+# 使う前に必ず次を実行し、破産確率を自分の目で確認してください:
+#
+#   llmfx target --win-rate <実測値> --win-r <実測値> --trades-per-month <実測値>
+#
+# バックテストの実測値で `到達不能` と表示された場合、この設定を使っても
+# 目標には届きません。リスクを上げても届かないものは届きません。
+
+instrument:
+  symbol: USD_JPY
+  granularity: M15
+  pip_size: 0.01
+  quote_to_account_rate: 1.0
+
+swing:
+  left: 2                   # 確定を早め、シグナル数を増やす(ノイズも増える)
+  right: 2
+  atr_period: 14
+  min_swing_atr: 0.45
+
+entry:
+  require_prior_trend: true
+  max_break_extension_atr: 1.2
+  stop_buffer_atr: 0.15
+  min_rr: 2.0               # ここは要件なので緩めない
+  min_stop_distance_atr: 0.20
+  max_stop_distance_atr: 5.0
+  target_strategies:
+    - trend_origin
+    - measured_move
+    - atr
+  structure_lookback_swings: 24
+  measured_move_mult: 1.0
+  atr_target_mult: 3.0
+  min_target_distance_atr: 0.4
+
+risk:
+  initial_equity: 10000.0
+  risk_per_trade: 0.05      # ⚠️ 高リスク
+  max_risk_per_trade: 0.05
+  max_daily_loss: 0.10
+  max_drawdown_stop: 0.35
+  max_concurrent_positions: 1
+  monthly_target: 1.4
+  compounding: true
+
+execution:
+  entry_mode: next_open
+  spread_pips: 1.0
+  slippage_pips: 0.3        # 高リスク時ほど約定は不利に見積もる
+  commission_per_unit: 0.0
+  break_even_at_r: 1.0
+  trail_to_structure: true
+  max_bars_in_trade: 300
+  exit_on_structure_flip: true
+
+llm:
+  enabled: false
+  model: claude-opus-5
+  effort: medium
+  max_tokens: 8000
+  gate_enabled: true
+  journal_enabled: true
+  fail_open: false          # 高リスク運用では、判断できないときは見送る
+  cache_path: data/llm_cache.sqlite
+  timeout_seconds: 120.0
+
+backtest:
+  warmup_bars: 100

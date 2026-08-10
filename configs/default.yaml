@@ -1,0 +1,68 @@
+# 既定設定 — 保守的な運用を想定
+#
+# この設定は「まず壊れないこと」を優先しています。目標月利 1.4 倍(+40%)は
+# risk.monthly_target に記録されていますが、そこへ到達するために必要な
+# リスク率と破産確率は `llmfx backtest` のレポート末尾、または
+# `llmfx target` コマンドで必ず確認してください。
+
+instrument:
+  symbol: USD_JPY
+  granularity: M15
+  pip_size: 0.01            # USD_JPY 系は 0.01、EUR_USD 等は 0.0001
+  quote_to_account_rate: 1.0
+
+swing:
+  left: 3                   # ピボット確定に必要な左右の本数
+  right: 3                  # 右 3 本 = スイングは常に 3 本遅れて確定する
+  atr_period: 14
+  min_swing_atr: 0.6        # これ未満の値幅はノイズとして無視
+
+entry:
+  require_prior_trend: true # 直前が明確な逆方向トレンドのときだけ「転換」と認める
+  max_break_extension_atr: 1.0
+  stop_buffer_atr: 0.15
+  min_rr: 2.0               # 要件: リスクリワードが 1/2 を上回る場合のみ
+  min_stop_distance_atr: 0.25
+  max_stop_distance_atr: 4.0
+  target_strategies:        # 先に水準を出せたものを採用(RR で選び直さない)
+    - trend_origin          # 反転させられたトレンドの起点まで
+    - measured_move
+    - atr
+  structure_lookback_swings: 20
+  measured_move_mult: 1.0
+  atr_target_mult: 3.0
+  min_target_distance_atr: 0.5
+
+risk:
+  initial_equity: 10000.0
+  risk_per_trade: 0.02      # 1 トレード 2%
+  max_risk_per_trade: 0.05
+  max_daily_loss: 0.06      # 当日 -6% で新規停止
+  max_drawdown_stop: 0.25   # 累計 -25% で全停止
+  max_concurrent_positions: 1
+  monthly_target: 1.4       # 目標月利(実現可能性は必ず検証すること)
+  compounding: true
+
+execution:
+  entry_mode: next_open     # 翌足始値で約定(現実的)
+  spread_pips: 1.0
+  slippage_pips: 0.2
+  commission_per_unit: 0.0
+  break_even_at_r: 1.0
+  trail_to_structure: true
+  max_bars_in_trade: 400
+  exit_on_structure_flip: true
+
+llm:
+  enabled: false            # バックテストの決定性を保つため既定は off
+  model: claude-opus-5
+  effort: medium
+  max_tokens: 8000
+  gate_enabled: true
+  journal_enabled: true
+  fail_open: true           # API 障害時はルール判断を優先して通す
+  cache_path: data/llm_cache.sqlite
+  timeout_seconds: 120.0
+
+backtest:
+  warmup_bars: 100
