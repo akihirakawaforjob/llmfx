@@ -2,6 +2,7 @@
 
     llmfx data synth      合成データを生成(API 不要の動作確認用)
     llmfx data fetch      OANDA から確定足を取得して CSV へ
+    llmfx data import-mt4 MT4 / MT5 がエクスポートした CSV を取り込む
     llmfx backtest        バックテスト実行 + Markdown レポート出力
     llmfx diagnose        シグナルの却下理由と RR 分布を確認(パラメータ調整用)
     llmfx target          目標月利に必要なリスク率と破産確率を計算
@@ -93,6 +94,19 @@ def _build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--out", required=True)
     fetch.add_argument("--price", default="M", choices=["M", "B", "A"])
     fetch.set_defaults(handler=_cmd_data_fetch)
+
+    mt4 = data.add_parser(
+        "import-mt4", help="MT4 / MT5 の CSV を取り込む(楽天 MT4 など)"
+    )
+    mt4.add_argument("--in", dest="source", required=True, help="MT4 が出力した CSV")
+    mt4.add_argument("--out", required=True, help="変換後の CSV")
+    mt4.add_argument(
+        "--server-tz-offset",
+        type=float,
+        default=0.0,
+        help="データの時刻が UTC から何時間ずれているか(MT4 サーバが GMT+2 なら 2)",
+    )
+    mt4.set_defaults(handler=_cmd_data_import_mt4)
 
     # -- backtest ------------------------------------------------------
     backtest = sub.add_parser("backtest", help="バックテストを実行")
@@ -202,6 +216,36 @@ def _cmd_data_fetch(args: argparse.Namespace) -> int:
         f"({candles[0].time:%Y-%m-%d} 〜 {candles[-1].time:%Y-%m-%d}) -> {args.out}"
     )
     return 0
+
+
+def _cmd_data_import_mt4(args: argparse.Namespace) -> int:
+    from .data.mt4 import Mt4FormatError, infer_granularity_minutes, load_mt4_csv
+
+    try:
+        candles = load_mt4_csv(args.source, server_tz_offset=args.server_tz_offset)
+    except Mt4FormatError as exc:
+        print(f"MT4 CSV の読み込みに失敗しました: {exc}", file=sys.stderr)
+        return 2
+
+    written = save_candles_csv(candles, args.out)
+    minutes = infer_granularity_minutes(candles)
+
+    print(f"{written:,} 本を取り込みました -> {args.out}")
+    print(f"期間: {candles[0].time:%Y-%m-%d %H:%M} 〜 {candles[-1].time:%Y-%m-%d %H:%M} (UTC)")
+    if minutes is not None:
+        label = _granularity_label(minutes)
+        print(f"推定した足の間隔: {minutes:.0f} 分{f' ({label})' if label else ''}")
+    if args.server_tz_offset == 0.0:
+        print(
+            "※ --server-tz-offset を指定していないため、CSV の時刻をそのまま UTC として"
+            "扱っています。MT4 のサーバ時刻がずれている場合は指定してください。"
+        )
+    return 0
+
+
+def _granularity_label(minutes: float) -> str | None:
+    table = {1: "M1", 5: "M5", 15: "M15", 30: "M30", 60: "H1", 240: "H4", 1440: "D"}
+    return table.get(int(round(minutes)))
 
 
 def _cmd_backtest(args: argparse.Namespace) -> int:

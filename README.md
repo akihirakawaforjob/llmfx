@@ -63,6 +63,27 @@ python -m llmfx.cli review --journal data/paper.sqlite --out out/review.md
 
 ## 実データを使う
 
+データの入手方法は 2 通りあります。どちらでもバックテスト以降は同じです。
+
+### A. 楽天 MT4 など、MT4 / MT5 から CSV をエクスポートする
+
+MT4 の「ツール → ヒストリーセンター」で通貨ペアと時間足を選び、
+`エクスポート` で CSV を保存してから取り込みます。
+
+```bash
+python -m llmfx.cli data import-mt4 --in ~/Downloads/USDJPY15.csv \
+    --out data/usdjpy_m15.csv --server-tz-offset 2
+```
+
+`--server-tz-offset` は **データの時刻が UTC から何時間ずれているか**。
+MT4 のサーバ時刻は業者ごとに GMT+2 / GMT+3 などへずれており、UTC ではありません。
+取り込み後に表示される期間と足の間隔が想定どおりか確認してください。
+
+ヘッダの有無、カンマ / タブ区切り、日時が 1 列か 2 列か、末尾の余分な列は
+自動で判定します。
+
+### B. OANDA の API から取得する
+
 ```bash
 export OANDA_API_TOKEN=...      # デモ口座のトークン
 export OANDA_ACCOUNT_ID=...
@@ -70,7 +91,13 @@ export OANDA_ENV=practice
 
 python -m llmfx.cli data fetch --instrument USD_JPY --granularity M15 \
     --count 50000 --out data/usdjpy_m15.csv
+```
+
+### どちらの場合も
+
+```bash
 python -m llmfx.cli backtest --config configs/default.yaml --data data/usdjpy_m15.csv
+python -m llmfx.cli diagnose --config configs/default.yaml --data data/usdjpy_m15.csv
 ```
 
 ---
@@ -253,7 +280,7 @@ python -m llmfx.cli review --journal data/journal.sqlite --days 30 --llm --out o
 python -m pytest -q
 ```
 
-87 件。重点を置いているのは次の性質です:
+97 件。重点を置いているのは次の性質です:
 
 - スイングは右 N 本を見終わるまで確定しない(先読み防止)
 - データを打ち切っても過去のトレードが変わらない(先読み防止)
@@ -274,7 +301,7 @@ llmfx/
     targets.py     利確目標の決定
     strategy.py    3 要件を束ねたシグナル生成
     risk.py        サイジング・リスク制限・目標月利の逆算
-  data/            OANDA / CSV / 合成データ
+  data/            OANDA / CSV / MT4 エクスポート / 合成データ
   execution/       約定モデル・ブローカー・実行ループ
     fills.py       バックテストとペーパー取引で共有する約定判定
   backtest/        イベント駆動バックテストと成績評価
@@ -297,6 +324,9 @@ llmfx/
   初回はデモ口座かつ最小ロットで確認してください
 - **本番口座はブロックしています**。`OANDA_ENV=live` かつ `allow_live=True`
   の両方を明示しない限り動きません
+- **楽天 FX には Python から直接発注できる公開 API がありません**。楽天で自動売買する場合、正規ルートは MT4 の EA(MQL4)です。
+  将来的に実弾へ繋ぐときは、判断を Python 側に残したまま MT4 には発注だけさせる
+  ブリッジ構成を想定しています(戦略ごと MQL4 へ移植すると LLM 層が使えなくなるため)
 - **同時保有は 1 銘柄・1 建玉**です。複数通貨ペアの同時運用は未実装
 - **スワップポイントは未計上**です。日をまたぐポジションでは実際の損益と
   ずれます
