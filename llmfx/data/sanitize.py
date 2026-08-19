@@ -19,6 +19,10 @@ HistData の初期(2000〜2001 年ごろ)には、実在しない値が混ざっ
   - 高安の整合が崩れている(low > high など)
   - 直近の中央値から 2 倍を超えて離れている(= 50% 未満か 200% 超)
 
+判定は **四本値すべて** に掛ける。終値だけを見ていたときは、終値が正常で
+高値だけ 39.82(実勢 0.79)という足が残り、1 件の取引が R=1018 を計上して
+その銘柄の集計を壊した。
+
 スイスフランショックの 18% は通る。2300 倍や 83% 下落は落ちる。
 """
 
@@ -34,8 +38,14 @@ from ..domain.types import Candle
 REFERENCE_WINDOW = 200
 
 # 中央値に対する許容比。0.5 〜 2.0 の外を「あり得ない」とみなす。
-MIN_RATIO = 0.5
-MAX_RATIO = 2.0
+MIN_RATIO = 0.6
+MAX_RATIO = 1.7
+
+# 1 本の足の値幅(高値 - 安値)が終値に占める割合の上限。
+# 「安値が終値のちょうど半分」という破損が実在し(USD/CHF 2004-05-17 は
+# C=1.2826 に対し L=0.6413)、比率の判定だけでは境界のすぐ外側で生き残った。
+# 本物の急変でも、スイスフランショックの 1 本あたりは 5% 程度。
+MAX_BAR_RANGE = 0.25
 
 
 @dataclass
@@ -56,12 +66,15 @@ class SanitizeReport:
         return f"{self.kept:,} 本 (除去 {self.dropped} 本: {detail})"
 
 
-def _malformed(candle: Candle) -> bool:
+def _malformed(candle: Candle, max_range: float = MAX_BAR_RANGE) -> bool:
     values = (candle.open, candle.high, candle.low, candle.close)
     if any(v <= 0 for v in values):
         return True
-    return not (candle.low <= min(candle.open, candle.close)
-                and candle.high >= max(candle.open, candle.close))
+    if not (candle.low <= min(candle.open, candle.close)
+            and candle.high >= max(candle.open, candle.close)):
+        return True
+    # 1 本で終値の 25% を超える値幅は、為替ではあり得ない。
+    return (candle.high - candle.low) / candle.close > max_range
 
 
 def drop_bad_bars(
@@ -92,8 +105,14 @@ def drop_bad_bars(
 
         if reference:
             centre = median(reference)
-            ratio = candle.close / centre if centre > 0 else 0.0
-            if ratio < min_ratio or ratio > max_ratio:
+            if centre <= 0:
+                note("直近から乖離しすぎ", candle)
+                continue
+            # **四本値すべてを見る。**終値だけを見ていたときは、終値は
+            # 正常なのに高値だけ 39.82(実勢 0.79)という足が残り、
+            # 1 件の取引が R=1018 を計上して集計を壊した。
+            ratios = [v / centre for v in (candle.open, candle.high, candle.low, candle.close)]
+            if any(r < min_ratio or r > max_ratio for r in ratios):
                 note("直近から乖離しすぎ", candle)
                 continue
 

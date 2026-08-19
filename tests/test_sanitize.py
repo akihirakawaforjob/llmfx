@@ -108,3 +108,50 @@ def test_report_reads_clearly():
     _, report = drop_bad_bars(candles)
     assert "除去 1 本" in report.summary()
     assert report.examples
+
+
+def test_a_corrupt_high_alone_is_dropped():
+    """終値が正常でも高値だけ壊れている足がある。
+
+    AUDUSD 2004-11-24 は O=39.8197 H=39.8197 L=0.7889 C=0.7889 だった。
+    終値だけ見ていたときはこれが残り、1 件の取引が R=1018 を計上して
+    その銘柄の集計を壊した。
+    """
+    candles = normal(250, price=0.7889)
+    candles.insert(200, Candle(
+        time=T0, open=39.8197, high=39.8197, low=0.7889, close=0.7889, volume=1.0))
+    kept, report = drop_bad_bars(candles)
+    assert report.dropped == 1
+    assert all(c.high < 2.0 for c in kept)
+
+
+def test_a_corrupt_low_alone_is_dropped():
+    """AUDJPY 2005-05-01 は C=81.99 なのに L=0.6747 だった。"""
+    candles = normal(250, price=82.0)
+    candles.insert(200, Candle(
+        time=T0, open=135.18, high=135.21, low=0.6747, close=81.99, volume=1.0))
+    kept, report = drop_bad_bars(candles)
+    assert report.dropped == 1
+    assert all(c.low > 10.0 for c in kept)
+
+
+def test_a_half_price_low_is_dropped():
+    """安値が終値のちょうど半分という破損が実在する。
+
+    USD/CHF 2004-05-17 は C=1.2826 に対して L=0.6413 だった。
+    比率の判定だけでは境界(0.5)のすぐ外側で生き残ってしまう。
+    """
+    candles = normal(250, price=1.2826)
+    candles.insert(200, Candle(
+        time=T0, open=1.2814, high=1.2826, low=0.6413, close=1.282, volume=1.0))
+    kept, report = drop_bad_bars(candles)
+    assert report.dropped == 1
+
+
+def test_a_five_percent_bar_survives():
+    """スイスフランショックでも 1 本あたりは 5% 程度。落としてはいけない。"""
+    candles = normal(250, price=1.02)
+    candles.insert(200, Candle(
+        time=T0, open=1.02, high=1.025, low=0.972, close=0.975, volume=1.0))
+    kept, report = drop_bad_bars(candles)
+    assert report.dropped == 0, f"本物の急変を落としている: {report.reasons}"
