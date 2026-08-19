@@ -1,0 +1,38 @@
+# USD_CHF — 売買ロジックは全銘柄で同一。銘柄固有の値だけを変えている。
+# quote_to_account_rate は 1.0。R 倍数は換算レートが相殺するため分析には支障ない。
+instrument: {symbol: USD_CHF, granularity: H1, pip_size: 0.0001, quote_to_account_rate: 1.0,
+  min_order_size: 1000.0, size_step: 1000.0}
+swing: {left: 3, right: 3, atr_period: 14, min_swing_atr: 0.6}
+entry:
+  require_prior_trend: true
+  max_break_extension_atr: 1.0
+  stop_buffer_atr: 0.15
+  min_rr: 0.01
+  min_stop_distance_atr: 0.25
+  max_stop_distance_atr: 4.0
+  stop_basis_mode: recent_swing
+  mode: pullback
+  higher_timeframe: D1
+  htf_alignment_source: reversal
+  pullback_max_bars: 40
+  pullback_stop_buffer_atr: 0.5
+  pullback_invalidation_atr: 3.0
+  use_take_profit: false
+  target_strategies: [trend_origin, measured_move, atr]
+  structure_lookback_swings: 20
+  measured_move_mult: 1.0
+  atr_target_mult: 3.0
+  min_target_distance_atr: 0.5
+risk: {initial_equity: 1000000.0, risk_per_trade: 0.02, max_risk_per_trade: 0.05,
+  max_daily_loss: 0.06, max_drawdown_stop: 0.25, max_concurrent_positions: 1,
+  max_leverage: 25.0, monthly_target: 1.4, compounding: true}
+execution:
+  entry_mode: next_open
+  spread_pips: 0.5
+  slippage_pips: 0.1
+  break_even_at_r: null
+  trail_to_structure: false
+  max_bars_in_trade: 400
+  exit_on_structure_flip: false
+llm: {enabled: false}
+backtest: {warmup_bars: 100, holdout_start: "2020-01-01"}
