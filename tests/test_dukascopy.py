@@ -207,3 +207,36 @@ def test_reversed_range_is_rejected():
             datetime(2024, 1, 3, tzinfo=UTC),
             datetime(2024, 1, 2, tzinfo=UTC),
         )
+
+
+def test_non_strict_mode_records_failed_days_instead_of_aborting():
+    """1 日の 503 で数年分の取得が丸ごと落ちるのを避ける。
+
+    ただし飛ばした日は failures に必ず残す。穴の空いたデータで
+    バックテストを回すと、理由の分からない成績差として現れるため。
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/03/" in str(request.url):  # 1 月 3 日だけ落ち続ける
+            return httpx.Response(503, text="Service Unavailable")
+        return httpx.Response(200, content=build_bi5(minute_rows(2)))
+
+    failures: list[datetime] = []
+    with client_returning(handler) as client:
+        candles = fetch_m1_candles(
+            "USDJPY",
+            datetime(2024, 1, 2, tzinfo=UTC),
+            datetime(2024, 1, 5, tzinfo=UTC),
+            client=client, pause=0, retries=1, backoff=0.0,
+            strict=False, failures=failures,
+        )
+
+    assert candles, "他の日まで失われている"
+    assert [d.day for d in failures] == [3], "飛ばした日が記録されていない"
+
+
+def test_backoff_is_capped():
+    """指数バックオフを青天井にすると 1 日分で何分も待つことになる。"""
+    from llmfx.data.dukascopy import MAX_BACKOFF
+
+    assert MAX_BACKOFF <= 60.0

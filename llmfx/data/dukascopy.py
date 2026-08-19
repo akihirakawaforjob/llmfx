@@ -101,37 +101,41 @@ def decode_bi5(payload: bytes, day: datetime, scale: int) -> list[Candle]:
     return candles
 
 
+MAX_BACKOFF = 30.0
+"""指数バックオフの上限(秒)。青天井にすると 1 日分で何分も待つことになる。"""
+
+
+class _Unavailable(Exception):
+    """リトライを尽くしても取れなかった日。呼び出し側が握るか落とすかを決める。"""
+
+
 def _download(
     client: httpx.Client, url: str, retries: int, backoff: float
 ) -> bytes | None:
-    """1 日分を取る。データが無い日は None。"""
+    """1 日分を取る。データが無い日は None。取れなかった日は _Unavailable。"""
     last_error: Exception | None = None
     for attempt in range(retries + 1):
+        if attempt:
+            time.sleep(min(backoff * (2 ** (attempt - 1)), MAX_BACKOFF))
         try:
             response = client.get(url)
         except httpx.HTTPError as exc:
             last_error = exc
-            if attempt < retries:
-                time.sleep(backoff * (2**attempt))
-                continue
-            raise DukascopyError(f"取得に失敗しました({url}): {exc}") from exc
+            continue
 
         # 土日・祝日・上場前はファイルが存在しない。
         if response.status_code == 404:
             return None
-        # 503 が断続的に混ざる。ここを諦めると数年分の取得が途中で死ぬ。
-        if response.status_code in (500, 502, 503, 504):
+        # 503 は断続的にも連続的にも来る。同じ日に対して何度も返ることがあり、
+        # ここで諦めると数年分の取得が 1 日のせいで丸ごと落ちる。
+        if response.status_code in (429, 500, 502, 503, 504):
             last_error = DukascopyError(f"HTTP {response.status_code}")
-            if attempt < retries:
-                time.sleep(backoff * (2**attempt))
-                continue
-            raise DukascopyError(f"取得に失敗しました({url}): HTTP {response.status_code}")
-
+            continue
         if response.status_code != 200:
             raise DukascopyError(f"取得に失敗しました({url}): HTTP {response.status_code}")
         return response.content
 
-    raise DukascopyError(f"取得に失敗しました({url}): {last_error}")
+    raise _Unavailable(f"{url}: {last_error}")
 
 
 def fetch_m1_candles(
@@ -141,15 +145,22 @@ def fetch_m1_candles(
     *,
     price: str = "BID",
     client: httpx.Client | None = None,
-    retries: int = 5,
+    retries: int = 8,
     backoff: float = 1.0,
     pause: float = 0.05,
     on_progress: Callable[[int, int, int], None] | None = None,
+    strict: bool = True,
+    failures: list[datetime] | None = None,
 ) -> list[Candle]:
     """`start` 以上 `end` 未満の 1 分足を返す(UTC 昇順)。
 
     `on_progress(完了日数, 全日数, 取得済み本数)` で進捗を受け取れる。
     数年分だと 1,000 日を超えるため、進捗表示は実質必須。
+
+    `strict=True`(既定)なら、リトライを尽くしても取れない日があった時点で
+    落とす。`strict=False` ならその日を飛ばして続け、日付を `failures` へ
+    積む。**飛ばした日を黙って無かったことにはしない。**穴の空いたデータで
+    バックテストを回すと、理由の分からない成績差として現れるため。
     """
     if start.tzinfo is None or end.tzinfo is None:
         raise DukascopyError("start / end はタイムゾーン付きで渡してください")
@@ -175,7 +186,14 @@ def fetch_m1_candles(
     collected: list[Candle] = []
     try:
         for index, day in enumerate(days, start=1):
-            payload = _download(session, _url(symbol, day, price), retries, backoff)
+            try:
+                payload = _download(session, _url(symbol, day, price), retries, backoff)
+            except _Unavailable as exc:
+                if strict:
+                    raise DukascopyError(f"取得に失敗しました({exc})") from exc
+                if failures is not None:
+                    failures.append(day)
+                payload = None
             if payload is not None:
                 collected.extend(decode_bi5(payload, day, scale))
             if on_progress is not None:
