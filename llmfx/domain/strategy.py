@@ -93,10 +93,18 @@ class DowReversalStrategy:
         assert htf is not None
 
         if cfg.require_htf_alignment:
-            if htf.bias is None:
-                self._reject(event, "htf_no_bias")
-                return False
-            if (event.side is Side.LONG) != (htf.bias is Trend.UP):
+            if cfg.htf_alignment_source == "trend":
+                # 上位足が「いまトレンド中」であること。レンジ中は見送る。
+                direction = htf.trend
+                if direction is Trend.RANGE:
+                    self._reject(event, "htf_no_trend")
+                    return False
+            else:
+                direction = htf.bias
+                if direction is None:
+                    self._reject(event, "htf_no_bias")
+                    return False
+            if (event.side is Side.LONG) != (direction is Trend.UP):
                 self._reject(event, "htf_not_aligned")
                 return False
 

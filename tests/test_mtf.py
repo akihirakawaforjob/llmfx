@@ -208,3 +208,59 @@ def test_proximity_filter_rejects_entries_far_from_the_extreme():
 
     assert len(tight_kept) <= len(loose_kept)
     assert any(r.reason == "htf_too_far_from_extreme" for r in tight.rejections)
+
+
+# --- 転換イベント版とトレンド状態版 ---------------------------------------
+# 「上位足でトレンドが起きている間ずっと」と「上位足が転換した瞬間の向き」は
+# 別物。前者のほうが持続的で、成立する場面が変わる。
+
+
+def test_trend_state_is_exposed_separately_from_the_reversal_bias():
+    candles = generate_synthetic_candles(count=8000, seed=20260810)
+    htf = HigherTimeframeFilter(minutes=240)
+    for c in candles:
+        htf.update(c)
+    assert htf.trend in (Trend.UP, Trend.DOWN, Trend.RANGE)
+    assert htf.bias in (Trend.UP, Trend.DOWN, None)
+
+
+def test_alignment_source_must_be_known():
+    from llmfx.config import ConfigError
+
+    config = AppConfig()
+    config.entry.higher_timeframe = "H4"
+    config.entry.htf_alignment_source = "guess"
+    with pytest.raises(ConfigError, match="htf_alignment_source"):
+        config.validate()
+
+
+def test_trend_source_rejects_signals_while_the_higher_timeframe_ranges():
+    """レンジ中は「トレンドが起きている」に当たらないので見送る。"""
+    candles = generate_synthetic_candles(count=8000, seed=20260810)
+
+    config = AppConfig()
+    config.entry.min_rr = 1e-6
+    config.entry.higher_timeframe = "H4"
+    config.entry.htf_alignment_source = "trend"
+    config.validate()
+    strategy = DowReversalStrategy(config)
+    [s for c in candles if (s := strategy.update(c))]
+
+    reasons = {r.reason for r in strategy.rejections}
+    assert "htf_no_trend" in reasons or "htf_not_aligned" in reasons
+
+
+def test_the_two_sources_do_not_select_the_same_signals():
+    """別物であることを実測で確認する。同じなら片方を持つ意味が無い。"""
+    candles = generate_synthetic_candles(count=8000, seed=20260810)
+
+    def run(source):
+        cfg = AppConfig()
+        cfg.entry.min_rr = 1e-6
+        cfg.entry.higher_timeframe = "H4"
+        cfg.entry.htf_alignment_source = source
+        cfg.validate()
+        strategy = DowReversalStrategy(cfg)
+        return [s.time for c in candles if (s := strategy.update(c))]
+
+    assert set(run("reversal")) != set(run("trend"))

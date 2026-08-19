@@ -64,7 +64,19 @@ class EntryConfig:
     上位足の転換と組み合わせて「候補の抽出」として使う。
     """
     require_htf_alignment: bool = True
-    """上位足の転換方向と一致するシグナルだけを採る。"""
+    """上位足の方向と一致するシグナルだけを採る。"""
+    htf_alignment_source: str = "reversal"
+    """上位足の「方向」をどう取るか。
+
+    reversal — 直近の上位足ダウ転換の向き。転換した瞬間の情報。
+               その後トレンドが崩れても保持される。
+    trend    — 上位足の *いまの* トレンド状態(HH/HL なら上昇)。
+               「上位足でトレンドが起きている間ずっと」という持続的な条件。
+               レンジ中は成立しないので、シグナル数は状況次第で増減する。
+
+    どちらが良いかは実測で決めること。この 2 つは別物であり、
+    「上位足のトレンドに従う」という言葉はふつう trend のほうを指す。
+    """
     htf_proximity_atr: float | None = None
     """上位足の転換後に付けた極値から、この ATR 倍以内でのみエントリーする。
 
@@ -255,6 +267,10 @@ class AppConfig:
         if not self.entry.allow_long and not self.entry.allow_short:
             raise ConfigError(
                 "entry.allow_long と entry.allow_short の両方が false ではエントリーできません"
+            )
+        if self.entry.htf_alignment_source not in {"reversal", "trend"}:
+            raise ConfigError(
+                "entry.htf_alignment_source は reversal か trend です"
             )
         if self.entry.htf_proximity_atr is not None and self.entry.htf_proximity_atr <= 0:
             raise ConfigError("entry.htf_proximity_atr は正の数か None です")

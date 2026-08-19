@@ -89,7 +89,11 @@ class HigherTimeframeFilter:
         )
 
         self.bias: Trend | None = None
-        """直近の上位足ダウ転換の方向。まだ 1 度も出ていなければ None。"""
+        """直近の上位足ダウ転換の方向。まだ 1 度も出ていなければ None。
+
+        「転換した瞬間の向き」であって、その後トレンドが崩れても保持される。
+        持続的な条件がほしい場合は `trend` を使う。
+        """
         self.extreme: float | None = None
         """バイアス成立後に付けた極値。上昇なら最安値、下降なら最高値。"""
         self.bars_since_reversal: int = 0
@@ -103,6 +107,19 @@ class HigherTimeframeFilter:
         self._volume: float = 0.0
         self._time = None
         self._completed: int = 0
+
+    @property
+    def trend(self) -> Trend:
+        """上位足の *いまの* トレンド状態(HH/HL なら UP、LH/LL なら DOWN)。
+
+        `bias`(転換した瞬間の向き)との違いが効く。
+        「上位足でトレンドが起きている間ずっと」という条件はこちら。
+        転換直後だけでなく、トレンドが続いている限り成立する。
+
+        `analyzer.trend` は転換時にラッチされて `bias` と同じ値になるため、
+        使わない。確定済みスイング列から毎回判定し直す。
+        """
+        return self.analyzer.structure_trend()
 
     @property
     def atr(self) -> float | None:

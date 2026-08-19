@@ -137,6 +137,15 @@ class DowAnalyzer:
             self._tracked_low = last_low
             self._low_level_consumed = False
 
+    def structure_trend(self) -> Trend:
+        """確定済みスイング列から、いまのトレンドを判定し直す。
+
+        `self.trend` は転換が起きた時点の向きを保持し続ける(ラッチする)ので、
+        「上位足がいまトレンド中か」を見たいときはこちらを使う。
+        HH かつ HL なら UP、LH かつ LL なら DOWN、どちらでもなければ RANGE。
+        """
+        return self._infer_trend()
+
     def _infer_trend(self) -> Trend:
         highs = self.detector.swings_of(SwingType.HIGH)
         lows = self.detector.swings_of(SwingType.LOW)
