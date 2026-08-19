@@ -8,11 +8,14 @@
 
 from __future__ import annotations
 
+from collections import deque
+
 from dataclasses import dataclass
 
 from ..config import AppConfig
 from .dow import DowAnalyzer, ReversalEvent
 from .mtf import HigherTimeframeFilter, granularity_minutes
+from .sessions import SessionFilter
 from .swings import SwingDetector
 from .targets import resolve_target
 from .types import Candle, Side, Signal, Trend
@@ -53,6 +56,17 @@ class DowReversalStrategy:
                 require_prior_trend=config.entry.require_prior_trend,
                 stop_basis_mode=config.entry.stop_basis_mode,
             )
+        self.session = SessionFilter(
+            allowed_hours_utc=tuple(
+                (int(a), int(b)) for a, b in config.entry.allowed_hours_utc
+            ),
+            blocked_weekdays=tuple(config.entry.blocked_weekdays),
+            nfp_blackout_minutes=config.entry.nfp_blackout_minutes,
+        )
+        # ATR の分位判定に使う履歴。過去のバーだけを見るので先読みにならない。
+        self._atr_history: deque[float] = deque(
+            maxlen=max(2, config.entry.atr_percentile_lookback)
+        )
         self.rejections: list[RejectedSignal] = []
         self.last_event: ReversalEvent | None = None
         """直近バーで検出されたダウ転換。RR フィルタで落ちた場合も残る。"""
@@ -74,9 +88,13 @@ class DowReversalStrategy:
             self.htf.update(candle)
         event = self.analyzer.update(candle)
         self.last_event = event
-        if event is None:
-            return None
-        return self._build_signal(event)
+        # 分位の比較対象は「この足より前」の ATR。現在値を混ぜると
+        # 自分自身との比較になって条件が緩む。判定後に積む。
+        signal = self._build_signal(event) if event is not None else None
+        atr = self.analyzer.atr
+        if atr is not None and atr > 0:
+            self._atr_history.append(atr)
+        return signal
 
     # ------------------------------------------------------------------
     def _reject(self, event: ReversalEvent, reason: str, rr: float | None = None) -> None:
@@ -85,6 +103,17 @@ class DowReversalStrategy:
                 bar_index=event.bar_index, side=event.side, reason=reason, rr=rr
             )
         )
+
+    def _atr_is_calm(self, atr: float) -> bool:
+        """いまの ATR が過去分布の許容分位に収まっているか。"""
+        threshold = self.config.entry.max_atr_percentile
+        assert threshold is not None
+        history = self._atr_history
+        # 履歴が薄いうちは判定できない。素通しせず見送る側に倒す。
+        if len(history) < 30:
+            return False
+        rank = sum(1 for past in history if past <= atr) / len(history)
+        return rank <= threshold
 
     def _htf_allows(self, event: ReversalEvent, atr: float) -> bool:
         """上位足の状況がこの転換を許すか。落とす場合は理由を記録する。"""
@@ -137,9 +166,21 @@ class DowReversalStrategy:
             self._reject(event, "short_not_allowed")
             return None
 
+        # 時間帯・曜日・指標予定。いずれもカレンダーから事前に分かる。
+        allowed, reason = self.session.allows(event.candle.time)
+        if not allowed:
+            self._reject(event, reason or "session_blocked")
+            return None
+
         atr = self.analyzer.atr
         if atr is None or atr <= 0:
             self._reject(event, "atr_not_ready")
+            return None
+
+        # 価格構造の外側から動かされている場面(介入・指標)を弾く。
+        # 比較対象は過去のバーの ATR だけなので先読みにならない。
+        if cfg.max_atr_percentile is not None and not self._atr_is_calm(atr):
+            self._reject(event, "volatility_too_high")
             return None
 
         # 上位足フィルタ: 下位足の転換を「候補」に格下げし、上位足の転換方向と

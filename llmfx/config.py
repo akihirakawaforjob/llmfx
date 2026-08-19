@@ -88,6 +88,31 @@ class EntryConfig:
     """
     htf_max_bars: int | None = None
     """上位足の転換からこの本数(下位足)を超えたら設定を無効にする。None で無期限。"""
+    allowed_hours_utc: list[list[int]] = field(default_factory=list)
+    """エントリーを許す時間帯(UTC)。空なら全時間帯。例: [[7, 16]]
+
+    ダウ転換はブレイクを捉える手法なので、ブレイクが機能する時間帯と
+    ダマシになる時間帯があるはず。カレンダーから事前に分かる情報なので
+    先読みにならない。
+    """
+    blocked_weekdays: list[int] = field(default_factory=list)
+    """見送る曜日(月=0 … 日=6)。FX の月曜早朝や金曜終盤を外す用。"""
+    nfp_blackout_minutes: int = 0
+    """米雇用統計の前後この分数を遮断する。0 で無効。
+
+    毎月第 1 金曜と決まっているので事前に分かる。「荒れた日を後から除く」の
+    ような先読みとは別物。
+    """
+    max_atr_percentile: float | None = None
+    """直近の ATR が過去分布のこの分位より上ならエントリーを見送る(0〜1)。
+
+    介入や指標で価格構造の外側から動かされている場面を弾くための条件。
+    「164 円で買わない」のような絶対水準の決め打ちは、その水準を知り得たのが
+    介入の後である以上、先読みになる。過去のバーだけから計算できる相対値で
+    表すこと。
+    """
+    atr_percentile_lookback: int = 500
+    """max_atr_percentile の判定に使う過去の本数。"""
     """損切り根拠の起点。
 
     trend_extreme: 転換前の波全体の極値(要件の文言どおり。損切りは深い)
@@ -268,6 +293,17 @@ class AppConfig:
             raise ConfigError(
                 "entry.allow_long と entry.allow_short の両方が false ではエントリーできません"
             )
+        for span in self.entry.allowed_hours_utc:
+            if len(span) != 2 or not all(0 <= h <= 24 for h in span):
+                raise ConfigError(
+                    f"entry.allowed_hours_utc の要素は [開始時, 終了時] (0〜24) です: {span}"
+                )
+        if any(d < 0 or d > 6 for d in self.entry.blocked_weekdays):
+            raise ConfigError("entry.blocked_weekdays は 0(月)〜6(日) です")
+        if self.entry.max_atr_percentile is not None and not (
+            0.0 < self.entry.max_atr_percentile <= 1.0
+        ):
+            raise ConfigError("entry.max_atr_percentile は 0 より大きく 1 以下です")
         if self.entry.htf_alignment_source not in {"reversal", "trend"}:
             raise ConfigError(
                 "entry.htf_alignment_source は reversal か trend です"
