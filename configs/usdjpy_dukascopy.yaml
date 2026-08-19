@@ -1,0 +1,86 @@
+# USD/JPY(Dukascopy のデータ)向け設定
+#
+# 売買ロジックは configs/btcjpy_gmo.yaml と完全に同一。銘柄固有の値だけを変える。
+# 揃えてあるのは、暗号資産と FX の成績差が「相場の違い」によるものであって
+# 「パラメータを弄った結果」ではないと言い切れるようにするため。
+#
+# コストの根拠(国内 FX 業者の一般的な水準):
+#   スプレッド   USD/JPY 原則 0.2 銭 = 0.2 pips
+#   取引手数料   0
+#   スワップ     未計上。売買方向で符号が変わる(受け取りにもなる)ため、
+#                daily_holding_cost_bps の一律コストでは表せない。
+#                日をまたぐ建玉では実損益とずれる点に注意。
+
+instrument:
+  symbol: USD_JPY
+  granularity: M15
+  pip_size: 0.01
+  quote_to_account_rate: 1.0  # 円建てクオート・円口座なので換算不要
+  min_order_size: 1000.0    # 国内 FX は 1,000 通貨単位が一般的
+  size_step: 1000.0
+
+swing:
+  left: 3
+  right: 3
+  atr_period: 14
+  min_swing_atr: 0.6
+
+entry:
+  require_prior_trend: true
+  max_break_extension_atr: 1.0
+  stop_buffer_atr: 0.15
+  min_rr: 2.0
+  min_stop_distance_atr: 0.25
+  max_stop_distance_atr: 4.0
+  stop_basis_mode: trend_extreme
+  higher_timeframe: null
+  require_htf_alignment: true
+  htf_proximity_atr: null
+  htf_max_bars: null
+  target_strategies:
+    - trend_origin
+    - measured_move
+    - atr
+  structure_lookback_swings: 20
+  measured_move_mult: 1.0
+  atr_target_mult: 3.0
+  min_target_distance_atr: 0.5
+
+risk:
+  initial_equity: 1000000.0   # 100 万円(BTC 側と揃える)
+  risk_per_trade: 0.02
+  max_risk_per_trade: 0.05
+  max_daily_loss: 0.06
+  max_drawdown_stop: 0.25
+  max_concurrent_positions: 1
+  max_leverage: 25.0        # 国内 FX の上限
+  monthly_target: 1.4
+  compounding: true
+
+execution:
+  entry_mode: next_open
+  spread_pips: 0.2          # 原則固定 0.2 銭
+  slippage_pips: 0.1
+  spread_bps: 0.0           # FX は価格水準が大きく動かないので固定 pips で足りる
+  commission_bps: 0.0
+  commission_per_unit: 0.0
+  daily_holding_cost_bps: 0.0   # スワップは方向で符号が変わるため未計上
+  holding_cost_rollover_hour_utc: 21
+  break_even_at_r: 1.0
+  trail_to_structure: true
+  max_bars_in_trade: 400
+  exit_on_structure_flip: true
+
+llm:
+  enabled: false
+  model: claude-opus-5
+  effort: medium
+  max_tokens: 8000
+  gate_enabled: true
+  journal_enabled: true
+  fail_open: true
+  cache_path: data/llm_cache.sqlite
+  timeout_seconds: 120.0
+
+backtest:
+  warmup_bars: 100
