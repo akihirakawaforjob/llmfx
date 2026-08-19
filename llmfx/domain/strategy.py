@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from ..config import AppConfig
 from .dow import DowAnalyzer, ReversalEvent
 from .mtf import HigherTimeframeFilter, granularity_minutes
+from .pullback import PullbackTracker
 from .sessions import SessionFilter
 from .swings import SwingDetector
 from .targets import resolve_target
@@ -40,9 +41,16 @@ class DowReversalStrategy:
             atr_period=config.swing.atr_period,
             min_swing_atr=config.swing.min_swing_atr,
         )
+        # pullback では、この解析器は「引き金」専用。方向は上位足が決めるので、
+        # 下位足にトレンド判定まで求めると調整が長い場面しか拾えなくなる。
+        trigger_needs_trend = (
+            config.entry.pullback_trigger_requires_trend
+            if config.entry.mode == "pullback"
+            else config.entry.require_prior_trend
+        )
         self.analyzer = DowAnalyzer(
             detector=detector,
-            require_prior_trend=config.entry.require_prior_trend,
+            require_prior_trend=trigger_needs_trend,
             stop_basis_mode=config.entry.stop_basis_mode,
         )
         self.htf: HigherTimeframeFilter | None = None
@@ -80,6 +88,8 @@ class DowReversalStrategy:
                 require_prior_trend=config.entry.require_prior_trend,
                 stop_basis_mode=config.entry.stop_basis_mode,
             )
+        # 押し目待ちの状態。pullback モードでだけ使う。
+        self.tracker = PullbackTracker()
         self.rejections: list[RejectedSignal] = []
         self.last_event: ReversalEvent | None = None
         """直近バーで検出されたダウ転換。RR フィルタで落ちた場合も残る。"""
@@ -101,6 +111,8 @@ class DowReversalStrategy:
             self.htf.update(candle)
         if self.trail_filter is not None:
             self.trail_filter.update(candle)
+        if self.config.entry.mode == "pullback":
+            self._advance_pullback(candle)
         event = self.analyzer.update(candle)
         self.last_event = event
         # 分位の比較対象は「この足より前」の ATR。現在値を混ぜると
@@ -129,6 +141,31 @@ class DowReversalStrategy:
             return False
         rank = sum(1 for past in history if past <= atr) / len(history)
         return rank <= threshold
+
+    def _advance_pullback(self, candle: Candle) -> None:
+        """上位足の上抜けで待機に入り、下位足を 1 本進める。
+
+        参照するのは確定した足だけなので先読みにならない。上位足の転換は
+        「その上位足が閉じた下位足」でだけ露出される。
+        """
+        cfg = self.config.entry
+        atr = self.analyzer.atr or 0.0
+        tolerance = atr * cfg.pullback_invalidation_atr
+
+        # 先に既存の待機を 1 本進める(打ち切り判定を上抜けより先に行う)。
+        self.tracker.observe(candle, cfg.pullback_max_bars, tolerance)
+
+        htf = self.htf
+        if htf is None or htf.fresh_event is None:
+            return
+        event = htf.fresh_event
+        # 新しい上抜けが出たら、待機を作り直す。
+        self.tracker.arm(
+            side=event.side,
+            break_level=event.broken_level,
+            candle=candle,
+            index=self.analyzer._bar_index,
+        )
 
     def _htf_allows(self, event: ReversalEvent, atr: float) -> bool:
         """上位足の状況がこの転換を許すか。落とす場合は理由を記録する。"""
@@ -200,7 +237,13 @@ class DowReversalStrategy:
 
         # 上位足フィルタ: 下位足の転換を「候補」に格下げし、上位足の転換方向と
         # その後の極値(押し安値 / 戻り高値)の付近だけを採る。
-        if self.htf is not None and not self._htf_allows(event, atr):
+        # pullback では待機状態そのものが上位足の方向を持っているので掛けない
+        # (掛けると二重になり、待機後に上位足のバイアスが動いた場合に落ちる)。
+        if (
+            cfg.mode != "pullback"
+            and self.htf is not None
+            and not self._htf_allows(event, atr)
+        ):
             return None
 
         # 飛び乗り防止: ブレイク水準から離れすぎている転換は見送る。
@@ -210,6 +253,8 @@ class DowReversalStrategy:
 
         if cfg.mode == "fade":
             return self._build_fade_signal(event, atr)
+        if cfg.mode == "pullback":
+            return self._build_pullback_signal(event, atr)
 
         entry = event.candle.close
         buffer = atr * cfg.stop_buffer_atr
@@ -287,6 +332,87 @@ class DowReversalStrategy:
         )
 
     # ------------------------------------------------------------------
+    def _build_pullback_signal(
+        self, event: ReversalEvent, atr: float
+    ) -> Signal | None:
+        """押し目からの下位足ダウ転換で入る。
+
+        調整波は下位足では逆方向のトレンドになっている。その直近スイングを
+        上抜けた(下抜けた)瞬間が、推進波への復帰。ここで入ると押し安値が
+        近いので損切りまでの幅が小さい。
+        """
+        cfg = self.config.entry
+        pending = self.tracker.pending
+        if pending is None:
+            self._reject(event, "no_pending_setup")
+            return None
+        if pending.side is not event.side:
+            self._reject(event, "pullback_wrong_direction")
+            return None
+
+        entry = event.candle.close
+        buffer = atr * cfg.pullback_stop_buffer_atr
+        if event.side is Side.LONG:
+            stop = pending.extreme - buffer
+            risk = entry - stop
+        else:
+            stop = pending.extreme + buffer
+            risk = stop - entry
+
+        if risk <= 0:
+            self._reject(event, "non_positive_risk")
+            return None
+        if risk < atr * cfg.min_stop_distance_atr:
+            self._reject(event, "stop_too_tight")
+            return None
+        if risk > atr * cfg.max_stop_distance_atr:
+            self._reject(event, "stop_too_wide")
+            return None
+
+        target = resolve_target(
+            side=event.side, entry=entry, risk_per_unit=risk,
+            swings=self.analyzer.swings, atr=atr, config=cfg,
+        )
+        if target is None:
+            self._reject(event, "no_target_level")
+            return None
+        reward = abs(target.price - entry)
+        rr = reward / risk
+        if rr < cfg.min_rr:
+            self._reject(event, "rr_below_minimum", rr=rr)
+            return None
+
+        take_profit = target.price
+        if not cfg.use_take_profit:
+            far = risk * 1000.0
+            take_profit = entry + far if event.side is Side.LONG else entry - far
+
+        # 入ったら待機は解除する。同じ上抜けで二度入らない。
+        self.tracker.cancel()
+
+        direction = "上抜け" if event.side is Side.LONG else "下抜け"
+        reason = (
+            f"上位足が {pending.break_level:.5f} を{direction}して待機。"
+            f"押し目({pending.extreme:.5f})から下位足がダウ転換したので "
+            f"{entry:.5f} で入る。損切りは押し安値の外 {stop:.5f}"
+        )
+        return Signal(
+            time=event.candle.time,
+            bar_index=event.bar_index,
+            side=event.side,
+            reference_price=entry,
+            stop_loss=stop,
+            take_profit=take_profit,
+            risk_per_unit=risk,
+            reward_per_unit=reward,
+            rr=rr,
+            broken_level=pending.break_level,
+            stop_basis=pending.extreme,
+            target_source=target.source if cfg.use_take_profit else "trail_only",
+            structure=self.analyzer.snapshot(),
+            reason=reason,
+        )
+
     def _build_fade_signal(self, event: ReversalEvent, atr: float) -> Signal | None:
         """ダウ転換をダマシとみなして逆に張る。
 

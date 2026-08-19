@@ -98,6 +98,12 @@ class HigherTimeframeFilter:
         """バイアス成立後に付けた極値。上昇なら最安値、下降なら最高値。"""
         self.bars_since_reversal: int = 0
         """バイアス成立からの下位足の本数。設定の鮮度を見るのに使う。"""
+        self.fresh_event = None
+        """上位足がこの下位足で確定し、そこで転換が起きた場合だけ入る。
+
+        次の下位足では None に戻る。「上抜けた瞬間」を下位足の時間軸で
+        1 度だけ拾うための窓口。
+        """
 
         self._bucket: int | None = None
         self._open: float = 0.0
@@ -135,6 +141,8 @@ class HigherTimeframeFilter:
     def update(self, candle: Candle) -> None:
         """下位足を 1 本受け取る。上位足が 1 本閉じたらそこで判定を進める。"""
         bucket = int(candle.time.timestamp()) // self.seconds
+        # 転換イベントは「上位足が閉じた下位足」でだけ露出する。
+        self.fresh_event = None
 
         if self._bucket is None:
             self._start(bucket, candle)
@@ -185,3 +193,4 @@ class HigherTimeframeFilter:
         self.bias = Trend.UP if event.side.sign > 0 else Trend.DOWN
         self.extreme = None
         self.bars_since_reversal = 0
+        self.fresh_event = event

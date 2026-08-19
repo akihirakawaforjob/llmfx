@@ -55,6 +55,7 @@ class EntryConfig:
 
     breakout — ダウ転換の方向へ順張り(当初の要件どおり)
     fade     — ダウ転換を **ダマシとみなして逆に張る**
+    pullback — 上位足で方向を決め、押し目を待って、下位足のダウ転換で入る
 
     FX 8 銘柄 x 20 年 22,264 件で、順張りは -0.114 R (t=-7.68)、コストを
     外しても -0.071 R (t=-5.33) だった。値動きそのものがブレイク方向と逆に
@@ -68,6 +69,32 @@ class EntryConfig:
 
     ダマシでなく本物のブレイクだった場合にすぐ切るための水準。
     ここが遠いと「損小」にならず、逆張りの利点が消える。
+    """
+    pullback_max_bars: int = 20
+    """押し目からの転換をこの本数まで待つ。来なければ見送る(追いかけない)。"""
+    pullback_trigger_requires_trend: bool = False
+    """下位足の引き金に「事前の逆方向トレンド」を要求するか。
+
+    要求すると、調整波が LH/LL のトレンドを形成し終えるまで引き金が引けない。
+    スイング確定に左右 3 本ずつ要るので、実質 30 本以上の調整でないと
+    エントリーできず、「1 本でも下げれば押し目」という合意と矛盾する。
+
+    False なら「調整の中で直近スイング高値を上抜けた」だけで引き金になる。
+    こちらが図の意図に沿う。上位足が方向を決めているので、下位足に
+    トレンド判定まで求める必要は無い。
+    """
+    pullback_invalidation_atr: float = 3.0
+    """上抜けた水準からこの ATR 倍を割ったら、ダマシとみなして待機を解除する。
+
+    上抜け直後に水準へ戻る動き(リテスト)は正常なので余裕を持たせる。
+    実測では 1.0 ATR だと上抜け 75 回のうち 10 回しか成立せず、
+    3.0 ATR で 17 回になった。狭すぎる無効化は機会を潰すだけになる。
+    """
+    pullback_stop_buffer_atr: float = 0.2
+    """損切りを押し安値からどれだけ離すか(ATR 倍)。
+
+    近いほど 1 回の損失は小さいが、ノイズで刈られる回数が増える
+    (いわゆる損切り貧乏)。掃引して決めること。
     """
     fade_target_r: float = 1.0
     """fade の利確を、リスクの何倍に置くか。
@@ -363,8 +390,14 @@ class AppConfig:
             0.0 < self.entry.max_atr_percentile <= 1.0
         ):
             raise ConfigError("entry.max_atr_percentile は 0 より大きく 1 以下です")
-        if self.entry.mode not in {"breakout", "fade"}:
-            raise ConfigError("entry.mode は breakout か fade です")
+        if self.entry.mode not in {"breakout", "fade", "pullback"}:
+            raise ConfigError("entry.mode は breakout / fade / pullback です")
+        if self.entry.mode == "pullback" and self.entry.higher_timeframe is None:
+            raise ConfigError(
+                "entry.mode: pullback には entry.higher_timeframe(方向を決める上位足)が要ります"
+            )
+        if self.entry.pullback_stop_buffer_atr <= 0:
+            raise ConfigError("entry.pullback_stop_buffer_atr は正の数です")
         if self.entry.fade_target_r <= 0:
             raise ConfigError("entry.fade_target_r は正の数である必要があります")
         if self.entry.fade_stop_buffer_atr <= 0:
