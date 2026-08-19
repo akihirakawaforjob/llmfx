@@ -193,6 +193,9 @@ class DowReversalStrategy:
             self._reject(event, "break_extension_too_large")
             return None
 
+        if cfg.mode == "fade":
+            return self._build_fade_signal(event, atr)
+
         entry = event.candle.close
         buffer = atr * cfg.stop_buffer_atr
 
@@ -256,6 +259,74 @@ class DowReversalStrategy:
             stop_basis=event.stop_basis,
             target_source=target.source,
             structure=structure,
+            reason=reason,
+        )
+
+    # ------------------------------------------------------------------
+    def _build_fade_signal(self, event: ReversalEvent, atr: float) -> Signal | None:
+        """ダウ転換をダマシとみなして逆に張る。
+
+        順張りとは損切り・利確の置き方が根本的に違う:
+
+          損切り  ブレイクで付けた極値の少し外側。本物のブレイクなら
+                  すぐ切れるので損失が小さい(ここが逆張りの利点)
+          利確    リスクの固定倍。遠い目標を狙うと勝率が落ちて元の木阿弥に
+                  なることは順張り側の RR 掃引で確認済みなので、
+                  min_rr のフィルタは使わない
+
+        ブレイク方向が上(LONG)なら売り、下(SHORT)なら買い。
+        """
+        cfg = self.config.entry
+        entry = event.candle.close
+        side = Side.SHORT if event.side is Side.LONG else Side.LONG
+        buffer = atr * cfg.fade_stop_buffer_atr
+
+        # ブレイクで付けた極値 = ブレイク水準 + 行き過ぎ分。
+        # event.extension はブレイク水準から終値までの距離。
+        if event.side is Side.LONG:
+            # 上抜けを売る。損切りは上へ。
+            stop = max(event.candle.high, entry) + buffer
+            risk = stop - entry
+            target = entry - risk * cfg.fade_target_r
+        else:
+            # 下抜けを買う。損切りは下へ。
+            stop = min(event.candle.low, entry) - buffer
+            risk = entry - stop
+            target = entry + risk * cfg.fade_target_r
+
+        if risk <= 0:
+            self._reject(event, "non_positive_risk")
+            return None
+        if risk < atr * cfg.min_stop_distance_atr:
+            self._reject(event, "stop_too_tight")
+            return None
+        if risk > atr * cfg.max_stop_distance_atr:
+            self._reject(event, "stop_too_wide")
+            return None
+
+        reward = abs(target - entry)
+        rr = reward / risk
+        direction = "上抜け" if event.side is Side.LONG else "下抜け"
+        taken = "売り" if side is Side.SHORT else "買い"
+        reason = (
+            f"{event.broken_level:.5f} の{direction}をダマシとみなして{taken}。"
+            f"損切りはブレイク極値の外 {stop:.5f}、"
+            f"利確は {cfg.fade_target_r:.1f}R の {target:.5f}"
+        )
+        return Signal(
+            time=event.candle.time,
+            bar_index=event.bar_index,
+            side=side,
+            reference_price=entry,
+            stop_loss=stop,
+            take_profit=target,
+            risk_per_unit=risk,
+            reward_per_unit=reward,
+            rr=rr,
+            broken_level=event.broken_level,
+            stop_basis=event.stop_basis,
+            target_source=f"fade_{cfg.fade_target_r:g}r",
+            structure=self.analyzer.snapshot(),
             reason=reason,
         )
 

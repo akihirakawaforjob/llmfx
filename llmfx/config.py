@@ -50,6 +50,32 @@ class SwingConfig:
 class EntryConfig:
     require_prior_trend: bool = True
     """True の場合、直前が明確な逆方向トレンドであることを転換の条件にする。"""
+    mode: str = "breakout"
+    """エントリーの向き。
+
+    breakout — ダウ転換の方向へ順張り(当初の要件どおり)
+    fade     — ダウ転換を **ダマシとみなして逆に張る**
+
+    FX 8 銘柄 x 20 年 22,264 件で、順張りは -0.114 R (t=-7.68)、コストを
+    外しても -0.071 R (t=-5.33) だった。値動きそのものがブレイク方向と逆に
+    偏っている。その偏りを取りにいくのが fade。
+
+    単純な符号反転ではない。損切りと利確を専用に組み直す(下記の
+    fade_stop_buffer_atr / fade_target_r)。
+    """
+    fade_stop_buffer_atr: float = 0.3
+    """fade の損切りを、ブレイクで付けた極値からどれだけ離すか(ATR 倍)。
+
+    ダマシでなく本物のブレイクだった場合にすぐ切るための水準。
+    ここが遠いと「損小」にならず、逆張りの利点が消える。
+    """
+    fade_target_r: float = 1.0
+    """fade の利確を、リスクの何倍に置くか。
+
+    遠い目標を狙うと勝率が落ちて元の木阿弥になることは、順張り側の
+    RR 掃引で繰り返し確認済み(min_rr を上げるほど悪化した)。
+    ここは固定の R 倍数で持ち、min_rr のフィルタは fade では使わない。
+    """
     stop_basis_mode: str = "trend_extreme"
     allow_long: bool = True
     allow_short: bool = True
@@ -313,6 +339,12 @@ class AppConfig:
             0.0 < self.entry.max_atr_percentile <= 1.0
         ):
             raise ConfigError("entry.max_atr_percentile は 0 より大きく 1 以下です")
+        if self.entry.mode not in {"breakout", "fade"}:
+            raise ConfigError("entry.mode は breakout か fade です")
+        if self.entry.fade_target_r <= 0:
+            raise ConfigError("entry.fade_target_r は正の数である必要があります")
+        if self.entry.fade_stop_buffer_atr <= 0:
+            raise ConfigError("entry.fade_stop_buffer_atr は正の数である必要があります")
         if self.entry.htf_alignment_source not in {"reversal", "trend"}:
             raise ConfigError(
                 "entry.htf_alignment_source は reversal か trend です"
