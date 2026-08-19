@@ -154,6 +154,18 @@ class EntryConfig:
     """損切り幅がこれ未満なら、スプレッドに対して薄すぎるので見送る。"""
     max_stop_distance_atr: float = 4.0
     """損切りが遠すぎる(=転換前の値幅が異常)場合も見送る。"""
+    use_take_profit: bool = True
+    """固定の利確を置くか。
+
+    False にすると利確を置かず、`execution.trail_to_structure` による
+    損切りの引き上げだけで決済する。ダウ理論の読みでは、新しい押し安値が
+    確定するたびに損切りを上げていけば、調整波で刈られずに伸ばせる。
+
+    実測(BTC 3,026 件)では、決済管理を外すと平均勝ちが 1.53 R から 3.72 R へ
+    2.4 倍に伸びた。勝率は落ちるが利幅は明確に伸びる。ただしこれまでの
+    検証は「固定の利確を残したままトレーリングを足す」形で、目標が
+    先に効いてトレーリングの意味が薄れていた。両者を分けて測るための設定。
+    """
     target_strategies: list[str] = field(
         default_factory=lambda: ["trend_origin", "measured_move", "atr"]
     )

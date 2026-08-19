@@ -232,6 +232,8 @@ class DowReversalStrategy:
         rr = reward / risk
 
         # 要件 3: リスクリワードが 1/2 を上回る(= reward >= 2 x risk)場合のみ。
+        # 利確を置かない設定でも、この選別自体は「そこまで伸びる余地があるか」
+        # の判定として残す。伸ばし切る前提でも、行き先が無い場面は見送りたい。
         if rr < cfg.min_rr:
             self._reject(event, "rr_below_minimum", rr=rr)
             return None
@@ -245,19 +247,26 @@ class DowReversalStrategy:
             f"利確根拠は {target.source}、RR={rr:.2f}"
         )
 
+        # 利確を置かない場合は、実質届かない水準へ逃がして
+        # 構造トレーリングだけで決済させる。約定判定のコードは触らない。
+        take_profit = target.price
+        if not cfg.use_take_profit:
+            far = risk * 1000.0
+            take_profit = entry + far if event.side is Side.LONG else entry - far
+
         return Signal(
             time=event.candle.time,
             bar_index=event.bar_index,
             side=event.side,
             reference_price=entry,
             stop_loss=stop,
-            take_profit=target.price,
+            take_profit=take_profit,
             risk_per_unit=risk,
             reward_per_unit=reward,
             rr=rr,
             broken_level=event.broken_level,
             stop_basis=event.stop_basis,
-            target_source=target.source,
+            target_source=target.source if cfg.use_take_profit else "trail_only",
             structure=structure,
             reason=reason,
         )

@@ -122,3 +122,52 @@ def test_both_directions_disabled_is_a_config_error():
     config.entry.allow_short = False
     with pytest.raises(ConfigError, match="allow_long"):
         config.validate()
+
+
+# --- 利確を置かない設定 ---------------------------------------------------
+# 固定の利確は勝ちの頭を押さえる。実測(FX 3 銘柄 20 年)では、利確を外すと
+# 平均勝ちが 4.15 R から 7.96 R へ、最大勝ちが 20 R から 52 R へ伸びた。
+
+
+def test_take_profit_is_used_by_default():
+    assert AppConfig().entry.use_take_profit is True
+
+
+def test_disabling_take_profit_pushes_the_target_out_of_reach():
+    """約定判定のコードは触らず、届かない水準へ逃がして無効化する。"""
+    candles = generate_synthetic_candles(count=6000, seed=20260810)
+
+    with_tp = AppConfig()
+    with_tp.entry.min_rr = 1e-6
+    a = DowReversalStrategy(with_tp)
+    capped = [s for c in candles if (s := a.update(c))]
+
+    without = AppConfig.from_dict(with_tp.to_dict())
+    without.entry.use_take_profit = False
+    b = DowReversalStrategy(without)
+    running = [s for c in candles if (s := b.update(c))]
+
+    assert len(capped) == len(running), "シグナルの本数は変わらないはず"
+    by_time = {s.time: s for s in capped}
+    for s in running:
+        other = by_time[s.time]
+        # 損切りとエントリーは同じ。利確だけが遠のく。
+        assert s.stop_loss == pytest.approx(other.stop_loss)
+        assert s.reference_price == pytest.approx(other.reference_price)
+        if s.side is Side.LONG:
+            assert s.take_profit > other.take_profit
+        else:
+            assert s.take_profit < other.take_profit
+        assert s.target_source == "trail_only"
+
+
+def test_rr_filter_still_applies_without_a_take_profit():
+    """伸ばし切る前提でも、行き先の無い場面は見送りたいので選別は残す。"""
+    candles = generate_synthetic_candles(count=6000, seed=20260810)
+    config = AppConfig()
+    config.entry.use_take_profit = False
+    config.entry.min_rr = 100.0
+    strategy = DowReversalStrategy(config)
+    kept = [s for c in candles if (s := strategy.update(c))]
+    assert not kept
+    assert any(r.reason == "rr_below_minimum" for r in strategy.rejections)
