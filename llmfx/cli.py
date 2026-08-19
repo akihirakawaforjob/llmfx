@@ -136,6 +136,12 @@ def _build_parser() -> argparse.ArgumentParser:
     backtest = sub.add_parser("backtest", help="バックテストを実行")
     backtest.add_argument("--config", help="設定 YAML のパス")
     backtest.add_argument("--data", required=True, help="ローソク足 CSV")
+    backtest.add_argument(
+        "--split",
+        default="dev",
+        choices=["dev", "holdout", "all"],
+        help="見る期間。既定は開発用(dev)。検証用を見るには holdout を明示する",
+    )
     backtest.add_argument("--report", default="out/report.md")
     backtest.add_argument("--trades-csv", default="out/trades.csv")
     backtest.add_argument("--journal", help="結果を保存する journal DB のパス")
@@ -146,6 +152,12 @@ def _build_parser() -> argparse.ArgumentParser:
     diagnose = sub.add_parser("diagnose", help="シグナルの却下理由と RR 分布を確認")
     diagnose.add_argument("--config")
     diagnose.add_argument("--data", required=True)
+    diagnose.add_argument(
+        "--split",
+        default="dev",
+        choices=["dev", "holdout", "all"],
+        help="見る期間。既定は開発用(dev)。検証用を見るには holdout を明示する",
+    )
     diagnose.set_defaults(handler=_cmd_diagnose)
 
     # -- target --------------------------------------------------------
@@ -366,9 +378,25 @@ def _granularity_label(minutes: float) -> str | None:
     return table.get(int(round(minutes)))
 
 
+def _apply_split(candles, config, args):
+    """開発用 / 検証用の切り出し。どの期間を見ているかを必ず表示する。"""
+    from .backtest.split import describe, split_candles
+
+    boundary = config.backtest.holdout_start
+    sliced = split_candles(candles, boundary, args.split)
+    print(f"対象期間: {describe(sliced, boundary, args.split)}", file=sys.stderr)
+    if boundary is not None and args.split != "dev":
+        print(
+            "⚠️  検証用データを見ています。ここで条件を弄り直すと、"
+            "この期間はもう検証用ではなくなります。",
+            file=sys.stderr,
+        )
+    return sliced
+
+
 def _cmd_backtest(args: argparse.Namespace) -> int:
     config = _load_config(args)
-    candles = load_candles_csv(args.data)
+    candles = _apply_split(load_candles_csv(args.data), config, args)
     if len(candles) < 200:
         print(f"データが {len(candles)} 本しかありません。最低 200 本必要です。", file=sys.stderr)
         return 2
@@ -405,7 +433,7 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
 
 def _cmd_diagnose(args: argparse.Namespace) -> int:
     config = _load_config(args)
-    candles = load_candles_csv(args.data)
+    candles = _apply_split(load_candles_csv(args.data), config, args)
 
     # RR フィルタを外して、転換の RR 分布そのものを観測する。
     probe_config = AppConfig.from_dict(config.to_dict())
