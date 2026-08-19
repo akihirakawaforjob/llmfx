@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from ..config import AppConfig
 from ..domain.types import Candle, ExitReason, Position, Side
@@ -24,6 +25,7 @@ class FillModel:
     pip_size: float
     spread_pips: float
     slippage_pips: float
+    spread_bps: float = 0.0
 
     @classmethod
     def from_config(cls, config: AppConfig) -> "FillModel":
@@ -31,21 +33,88 @@ class FillModel:
             pip_size=config.instrument.pip_size,
             spread_pips=config.execution.spread_pips,
             slippage_pips=config.execution.slippage_pips,
+            spread_bps=config.execution.spread_bps,
         )
 
-    @property
-    def cost_per_side(self) -> float:
-        return (self.spread_pips / 2.0 + self.slippage_pips) * self.pip_size
+    def cost_per_side(self, price: float) -> float:
+        """片道あたりの不利分。固定 pips と価格比例 bps の合計。"""
+        fixed = (self.spread_pips / 2.0 + self.slippage_pips) * self.pip_size
+        proportional = abs(price) * (self.spread_bps / 2.0) / 10_000.0
+        return fixed + proportional
 
     def entry(self, side: Side, price: float) -> float:
-        cost = self.cost_per_side
+        cost = self.cost_per_side(price)
         return price + cost if side is Side.LONG else price - cost
 
     def exit(self, side: Side, price: float, market: bool) -> float:
         if not market:
             return price
-        cost = self.cost_per_side
+        cost = self.cost_per_side(price)
         return price - cost if side is Side.LONG else price + cost
+
+
+@dataclass(frozen=True)
+class TradeCosts:
+    """1 トレードにかかる、価格差以外の費用."""
+
+    commission: float
+    holding: float
+
+    @property
+    def total(self) -> float:
+        return self.commission + self.holding
+
+
+def rollovers_crossed(entry_time: datetime, exit_time: datetime, hour_utc: int) -> int:
+    """建玉が日跨ぎの区切りを何回越えたか。
+
+    GMOコインは日本時間 6:00(= UTC 21:00)をまたいで建玉を持つと
+    レバレッジ手数料が発生する。エントリー直後に決済すれば 0 回。
+    """
+    if exit_time <= entry_time:
+        return 0
+    boundary = entry_time.replace(hour=hour_utc, minute=0, second=0, microsecond=0)
+    if boundary <= entry_time:
+        boundary += timedelta(days=1)
+    if boundary >= exit_time:
+        return 0
+    return int((exit_time - boundary).total_seconds() // 86_400) + 1
+
+
+def trade_costs(
+    config: AppConfig,
+    *,
+    units: float,
+    entry_price: float,
+    exit_price: float,
+    entry_time: datetime,
+    exit_time: datetime,
+) -> TradeCosts:
+    """手数料と建玉管理料を計算する。
+
+    バックテストとペーパー取引で同じ数字を使うため、ここに一本化している。
+
+    建玉管理料の評価額には入建値と決済値の平均を使う。実際の GMOコインは
+    各営業日の終値で評価するため厳密には一致しないが、保有中の平均的な
+    評価額の近似としてはこれで足りる(手数料率自体が 0.04%/日 と小さい)。
+    """
+    cfg = config.execution
+    notional_entry = abs(entry_price) * units
+    notional_exit = abs(exit_price) * units
+
+    commission = cfg.commission_per_unit * units
+    commission += (notional_entry + notional_exit) * cfg.commission_bps / 10_000.0
+
+    holding = 0.0
+    if cfg.daily_holding_cost_bps:
+        nights = rollovers_crossed(
+            entry_time, exit_time, cfg.holding_cost_rollover_hour_utc
+        )
+        average_notional = (notional_entry + notional_exit) / 2.0
+        holding = average_notional * nights * cfg.daily_holding_cost_bps / 10_000.0
+
+    rate = config.instrument.quote_to_account_rate
+    return TradeCosts(commission=commission * rate, holding=holding * rate)
 
 
 def evaluate_exit(

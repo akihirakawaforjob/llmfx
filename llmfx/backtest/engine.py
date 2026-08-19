@@ -30,7 +30,7 @@ from ..domain.types import (
     SwingType,
     Trade,
 )
-from ..execution.fills import FillModel, evaluate_exit, update_stop
+from ..execution.fills import FillModel, evaluate_exit, trade_costs, update_stop
 
 
 class EntryGate(Protocol):
@@ -299,6 +299,9 @@ class BacktestEngine:
             entry_price=entry_price,
             stop_price=signal.stop_loss,
             quote_to_account_rate=self.config.instrument.quote_to_account_rate,
+            min_units=self.config.instrument.min_order_size,
+            size_step=self.config.instrument.size_step,
+            max_leverage=self.config.risk.max_leverage,
         )
         if units <= 0:
             return None
@@ -347,8 +350,15 @@ class BacktestEngine:
         gross = (
             (exit_price - position.entry_price) * position.side.sign * position.units * rate
         )
-        commission = self.config.execution.commission_per_unit * position.units
-        pnl = gross - commission
+        costs = trade_costs(
+            self.config,
+            units=position.units,
+            entry_price=position.entry_price,
+            exit_price=exit_price,
+            entry_time=position.entry_time,
+            exit_time=candle.time,
+        )
+        pnl = gross - costs.total
         new_equity = equity + pnl
         r_multiple = pnl / position.risk_amount if position.risk_amount > 0 else 0.0
 
@@ -373,6 +383,8 @@ class BacktestEngine:
             structure=position.signal.structure,
             max_favorable_excursion=position.max_favorable_excursion,
             max_adverse_excursion=position.max_adverse_excursion,
+            commission_paid=costs.commission,
+            holding_cost_paid=costs.holding,
             entry_note=position.entry_note,
             gate_decision=(position.entry_note or {}).get("gate") if position.entry_note else None,
         )

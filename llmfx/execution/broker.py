@@ -16,7 +16,7 @@ from typing import Protocol
 from ..config import AppConfig
 from ..domain.risk import position_size
 from ..domain.types import Candle, ExitReason, Position, Side, Signal, Trade
-from .fills import FillModel, evaluate_exit
+from .fills import FillModel, evaluate_exit, trade_costs
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +77,12 @@ class PaperBroker:
             entry_price=entry_price,
             stop_price=signal.stop_loss,
             quote_to_account_rate=self.config.instrument.quote_to_account_rate,
+            min_units=self.config.instrument.min_order_size,
+            size_step=self.config.instrument.size_step,
+            max_leverage=self.config.risk.max_leverage,
         )
         if units <= 0:
-            logger.warning("資金が不足しているため発注できません(必要数量が 1 単位未満)")
+            logger.warning("資金が不足しているため発注できません(必要数量が最小注文数量未満)")
             return None
 
         self._position = Position(
@@ -129,8 +132,15 @@ class PaperBroker:
         gross = (
             (exit_price - position.entry_price) * position.side.sign * position.units * rate
         )
-        commission = self.config.execution.commission_per_unit * position.units
-        pnl = gross - commission
+        costs = trade_costs(
+            self.config,
+            units=position.units,
+            entry_price=position.entry_price,
+            exit_price=exit_price,
+            entry_time=position.entry_time,
+            exit_time=candle.time,
+        )
+        pnl = gross - costs.total
         self._equity += pnl
 
         trade = Trade(
@@ -154,6 +164,8 @@ class PaperBroker:
             structure=position.signal.structure,
             max_favorable_excursion=position.max_favorable_excursion,
             max_adverse_excursion=position.max_adverse_excursion,
+            commission_paid=costs.commission,
+            holding_cost_paid=costs.holding,
             entry_note=position.entry_note,
         )
         self.trades.append(trade)
@@ -205,9 +217,12 @@ class OandaBroker:
             entry_price=candle.close,
             stop_price=signal.stop_loss,
             quote_to_account_rate=self.config.instrument.quote_to_account_rate,
+            min_units=self.config.instrument.min_order_size,
+            size_step=self.config.instrument.size_step,
+            max_leverage=self.config.risk.max_leverage,
         )
         if units <= 0:
-            logger.warning("必要数量が 1 単位未満のため発注しません")
+            logger.warning("必要数量が最小注文数量未満のため発注しません")
             return None
 
         signed_units = units if signal.side is Side.LONG else -units

@@ -2,6 +2,7 @@
 
     llmfx data synth      合成データを生成(API 不要の動作確認用)
     llmfx data fetch      OANDA から確定足を取得して CSV へ
+    llmfx data fetch-gmo  GMOコインから取得(口座不要。暗号資産)
     llmfx data import-mt4 MT4 / MT5 がエクスポートした CSV を取り込む
     llmfx backtest        バックテスト実行 + Markdown レポート出力
     llmfx diagnose        シグナルの却下理由と RR 分布を確認(パラメータ調整用)
@@ -94,6 +95,17 @@ def _build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--out", required=True)
     fetch.add_argument("--price", default="M", choices=["M", "B", "A"])
     fetch.set_defaults(handler=_cmd_data_fetch)
+
+    gmo = data.add_parser(
+        "fetch-gmo", help="GMOコインの Public API から取得(口座・APIキー不要)"
+    )
+    gmo.add_argument("--symbol", default="BTC_JPY", help="BTC_JPY(レバレッジ) / BTC(現物) など")
+    gmo.add_argument("--granularity", default="M15")
+    gmo.add_argument("--out", required=True)
+    gmo.add_argument("--start", help="開始日 YYYY-MM-DD(UTC)")
+    gmo.add_argument("--end", help="終了日 YYYY-MM-DD(UTC、この日は含まない)")
+    gmo.add_argument("--days", type=int, help="--start の代わりに「直近 N 日」で指定する")
+    gmo.set_defaults(handler=_cmd_data_fetch_gmo)
 
     mt4 = data.add_parser(
         "import-mt4", help="MT4 / MT5 の CSV を取り込む(楽天 MT4 など)"
@@ -214,6 +226,55 @@ def _cmd_data_fetch(args: argparse.Namespace) -> int:
     print(
         f"{args.instrument} {args.granularity} を {written:,} 本取得しました "
         f"({candles[0].time:%Y-%m-%d} 〜 {candles[-1].time:%Y-%m-%d}) -> {args.out}"
+    )
+    return 0
+
+
+def _cmd_data_fetch_gmo(args: argparse.Namespace) -> int:
+    from datetime import datetime, timedelta, timezone
+
+    from .data.gmo import EARLIEST_INTRADAY, GmoError, fetch_klines
+
+    def _day(text: str) -> datetime:
+        return datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
+
+    end = _day(args.end) if args.end else datetime.now(timezone.utc)
+    if args.start:
+        start = _day(args.start)
+    elif args.days:
+        start = end - timedelta(days=args.days)
+    else:
+        start = datetime(
+            EARLIEST_INTRADAY.year, EARLIEST_INTRADAY.month, EARLIEST_INTRADAY.day,
+            tzinfo=timezone.utc,
+        )
+
+    def progress(done: int, total: int, bars: int) -> None:
+        if done % 25 == 0 or done == total:
+            print(f"  {done:>5}/{total} リクエスト  {bars:>7,} 本", file=sys.stderr)
+
+    print(
+        f"{args.symbol} {args.granularity} を取得します "
+        f"({start:%Y-%m-%d} 〜 {end:%Y-%m-%d} UTC)",
+        file=sys.stderr,
+    )
+    try:
+        candles = fetch_klines(
+            args.symbol, args.granularity, start, end, on_progress=progress
+        )
+    except GmoError as exc:
+        print(f"GMOコインからの取得に失敗しました: {exc}", file=sys.stderr)
+        return 2
+
+    if not candles:
+        print("ローソク足が 1 本も取得できませんでした", file=sys.stderr)
+        return 2
+
+    written = save_candles_csv(candles, args.out)
+    print(
+        f"{args.symbol} {args.granularity} を {written:,} 本取得しました "
+        f"({candles[0].time:%Y-%m-%d %H:%M} 〜 {candles[-1].time:%Y-%m-%d %H:%M} UTC) "
+        f"-> {args.out}"
     )
     return 0
 

@@ -27,6 +27,14 @@ class InstrumentConfig:
     """1 pip の価格幅。USD_JPY 系は 0.01、それ以外は概ね 0.0001。"""
     quote_to_account_rate: float = 1.0
     """クオート通貨→口座通貨の換算レート。1 単位あたり損益の計算に使う。"""
+    min_order_size: float = 1.0
+    """発注できる最小数量。FX は通貨単位なので 1、BTC は 0.001 など。"""
+    size_step: float = 1.0
+    """数量の刻み。これの倍数に切り下げて発注する。
+
+    ここを 1 のまま暗号資産に使うと、1 BTC(= 数百万円)未満の建玉がすべて
+    0 に丸められ、資金に見合った建玉がひとつも建たない。
+    """
 
 
 @dataclass
@@ -43,6 +51,31 @@ class EntryConfig:
     require_prior_trend: bool = True
     """True の場合、直前が明確な逆方向トレンドであることを転換の条件にする。"""
     stop_basis_mode: str = "trend_extreme"
+    allow_long: bool = True
+    allow_short: bool = True
+    """売買方向の許可。現物の暗号資産は売り建てができないため allow_short: false にする。
+
+    ダウ転換は上下対称に出るので、片方を切ると単純にシグナルが半減する。
+    """
+    higher_timeframe: str | None = None
+    """上位足(H1 / H4 / D1 など)。None で上位足フィルタを使わない。
+
+    下位足のダウ転換は単体では予測力が無い(実測 勝率 20.2% / 損益分岐 20.5%)。
+    上位足の転換と組み合わせて「候補の抽出」として使う。
+    """
+    require_htf_alignment: bool = True
+    """上位足の転換方向と一致するシグナルだけを採る。"""
+    htf_proximity_atr: float | None = None
+    """上位足の転換後に付けた極値から、この ATR 倍以内でのみエントリーする。
+
+    上昇バイアスなら「転換後の最安値の付近」、下降なら「最高値の付近」。
+    None で距離制限なし(方向の一致だけを見る)。
+
+    倍率の基準は **上位足の ATR**。上位足スケールの押し目を下位足の ATR で
+    測ると物差しが小さすぎ、ほぼ全部が「遠い」と判定されてしまう。
+    """
+    htf_max_bars: int | None = None
+    """上位足の転換からこの本数(下位足)を超えたら設定を無効にする。None で無期限。"""
     """損切り根拠の起点。
 
     trend_extreme: 転換前の波全体の極値(要件の文言どおり。損切りは深い)
@@ -85,6 +118,13 @@ class RiskConfig:
     max_drawdown_stop: float = 0.25
     """最大ドローダウンがこれを超えたら全停止(キルスイッチ)。"""
     max_concurrent_positions: int = 1
+    max_leverage: float | None = None
+    """建玉評価額 / 資産 の上限。None で無制限(実質的に検証用)。
+
+    国内の暗号資産は法令でレバレッジ 2 倍が上限。これを設定しないと、
+    損切りが近い場面で建玉が資産の何倍にも膨らみ、実際には建てられない
+    サイズを前提にした成績が出る。
+    """
     monthly_target: float = 1.4
     """目標月利。1.4 = 月あたり資産 1.4 倍(+40%)。実現可能性は target コマンドで検証する。"""
     compounding: bool = True
@@ -97,6 +137,28 @@ class ExecutionConfig:
     spread_pips: float = 1.0
     slippage_pips: float = 0.2
     commission_per_unit: float = 0.0
+    spread_bps: float = 0.0
+    """価格に比例するスプレッド(1 bp = 0.01%)。spread_pips とは加算される。
+
+    暗号資産のように価格水準が数倍動く銘柄では固定 pips では表せない。
+    BTC が 300 万円の時期と 1,000 万円の時期で、同じ 1,000 円のスプレッドは
+    3.3bp と 1.0bp で意味が変わってしまう。
+    """
+    commission_bps: float = 0.0
+    """約定代金にかかる手数料(片道、1 bp = 0.01%)。往復では 2 倍かかる。
+
+    GMOコインの取引所現物 Taker 0.05% なら 5。暗号資産FX は 0。
+    """
+    daily_holding_cost_bps: float = 0.0
+    """建玉を 1 日持ち越すごとに建玉評価額へかかる費用(1 bp = 0.01%)。
+
+    GMOコインの暗号資産FX のレバレッジ手数料 0.04%/日 なら 4。年率約 14.6%。
+
+    FX のスワップポイントは売買方向で符号が変わる(受け取りにもなる)ため、
+    この一律コストでは表せない。FX で使う場合は 0 のままにすること。
+    """
+    holding_cost_rollover_hour_utc: int = 21
+    """持ち越し判定の時刻(UTC)。GMOコインは日本時間 6:00 = UTC 21:00。"""
     break_even_at_r: float | None = 1.0
     """含み益がこの R 倍数に達したら損切りを建値へ。None で無効。"""
     trail_to_structure: bool = True
@@ -184,6 +246,29 @@ class AppConfig:
             )
         if self.execution.entry_mode not in {"next_open", "close"}:
             raise ConfigError("execution.entry_mode は next_open か close です")
+        if self.instrument.size_step <= 0:
+            raise ConfigError("instrument.size_step は正の数である必要があります")
+        if self.instrument.min_order_size <= 0:
+            raise ConfigError("instrument.min_order_size は正の数である必要があります")
+        if self.risk.max_leverage is not None and self.risk.max_leverage <= 0:
+            raise ConfigError("risk.max_leverage は正の数か None である必要があります")
+        if not self.entry.allow_long and not self.entry.allow_short:
+            raise ConfigError(
+                "entry.allow_long と entry.allow_short の両方が false ではエントリーできません"
+            )
+        if self.entry.htf_proximity_atr is not None and self.entry.htf_proximity_atr <= 0:
+            raise ConfigError("entry.htf_proximity_atr は正の数か None です")
+        if self.entry.higher_timeframe is not None:
+            from .domain.mtf import granularity_minutes
+
+            if granularity_minutes(self.entry.higher_timeframe) <= granularity_minutes(
+                self.instrument.granularity
+            ):
+                raise ConfigError(
+                    f"entry.higher_timeframe({self.entry.higher_timeframe})は "
+                    f"instrument.granularity({self.instrument.granularity})より "
+                    "上位の足である必要があります"
+                )
         if self.instrument.pip_size <= 0:
             raise ConfigError("instrument.pip_size は正の数である必要があります")
         if self.llm.effort not in {"low", "medium", "high", "xhigh", "max"}:

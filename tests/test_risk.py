@@ -123,3 +123,60 @@ def test_risk_manager_blocks_new_entries_after_daily_loss_limit():
     manager.on_bar(9_400, day="d2")
     allowed, _ = manager.can_open(9_400)
     assert allowed
+
+
+# --- 小数ロットとレバレッジ上限 ---------------------------------------------
+# 暗号資産は 1 単位が数百万円になるため、整数へ丸めると建玉がすべて 0 になる。
+
+
+def test_fractional_lots_are_not_rounded_away():
+    units, risk = position_size(
+        equity=1_000_000.0, risk_fraction=0.02,
+        entry_price=7_000_000.0, stop_price=6_700_000.0,
+        min_units=0.001, size_step=0.001,
+    )
+    # 20,000 / 300,000 = 0.0666... -> 0.001 刻みへ切り下げて 0.066
+    assert units == pytest.approx(0.066)
+    assert risk == pytest.approx(0.066 * 300_000)
+
+
+def test_integer_sizing_still_applies_to_fx_defaults():
+    units, _ = position_size(
+        equity=10_000.0, risk_fraction=0.02, entry_price=150.0, stop_price=149.5
+    )
+    assert units == pytest.approx(400.0)
+
+
+def test_size_below_the_minimum_order_is_rejected():
+    units, risk = position_size(
+        equity=10_000.0, risk_fraction=0.02,
+        entry_price=7_000_000.0, stop_price=6_700_000.0,
+        min_units=0.001, size_step=0.001,
+    )
+    assert units == 0.0 and risk == 0.0
+
+
+def test_leverage_cap_limits_the_notional():
+    """損切りが近いと建玉が資産の何倍にも膨らむ。国内暗号資産は 2 倍が上限。"""
+    uncapped, _ = position_size(
+        equity=1_000_000.0, risk_fraction=0.02,
+        entry_price=7_000_000.0, stop_price=6_990_000.0,
+        min_units=0.001, size_step=0.001,
+    )
+    capped, _ = position_size(
+        equity=1_000_000.0, risk_fraction=0.02,
+        entry_price=7_000_000.0, stop_price=6_990_000.0,
+        min_units=0.001, size_step=0.001, max_leverage=2.0,
+    )
+    assert uncapped == pytest.approx(2.0)      # 1,400 万円 = 資産の 14 倍
+    assert capped * 7_000_000.0 <= 1_000_000.0 * 2.0 + 1e-6
+    assert capped == pytest.approx(0.285)
+
+
+def test_leverage_cap_does_not_inflate_a_smaller_size():
+    units, _ = position_size(
+        equity=1_000_000.0, risk_fraction=0.02,
+        entry_price=7_000_000.0, stop_price=6_700_000.0,
+        min_units=0.001, size_step=0.001, max_leverage=2.0,
+    )
+    assert units == pytest.approx(0.066)

@@ -33,24 +33,43 @@ def position_size(
     quote_to_account_rate: float = 1.0,
     min_units: float = 1.0,
     max_units: float | None = None,
+    size_step: float = 1.0,
+    max_leverage: float | None = None,
 ) -> tuple[float, float]:
     """建玉数量と、実際に晒すリスク額を返す。
 
-    FX の 1 通貨単位あたり損益 = 価格差 x クオート通貨→口座通貨レート。
+    1 単位あたり損益 = 価格差 x クオート通貨→口座通貨レート。
+
+    数量は `size_step` の倍数へ切り下げる。FX は通貨単位なので刻み 1 で
+    問題ないが、暗号資産は 1 単位が数百万円になるため、整数へ丸めると
+    資金に見合った建玉がすべて 0 になってしまう。
+
+    `max_leverage` を渡すと建玉評価額を 資産 x レバレッジ に制限する。
+    国内の暗号資産は法令で 2 倍が上限。これを効かせないと、損切りが近い
+    場面で実際には建てられないサイズを前提にした成績が出る。
+
     戻り値: (units, risk_amount)
     """
     if equity <= 0:
         return 0.0, 0.0
     stop_distance = abs(entry_price - stop_price)
-    if stop_distance <= 0 or quote_to_account_rate <= 0:
+    if stop_distance <= 0 or quote_to_account_rate <= 0 or size_step <= 0:
         return 0.0, 0.0
 
     risk_amount = equity * risk_fraction
     units = risk_amount / (stop_distance * quote_to_account_rate)
-    units = math.floor(units)
+
+    if max_leverage is not None and entry_price > 0:
+        # 建玉評価額 = 数量 x 価格。これを 資産 x レバレッジ 以下に抑える。
+        cap = (equity * max_leverage) / (abs(entry_price) * quote_to_account_rate)
+        units = min(units, cap)
     if max_units is not None:
         units = min(units, max_units)
-    if units < min_units:
+
+    # 刻みへ切り下げる。浮動小数の誤差で 1 刻み落ちないよう少しだけ余裕を持たせる。
+    steps = math.floor(units / size_step + 1e-9)
+    units = steps * size_step
+    if units < min_units or units <= 0:
         return 0.0, 0.0
     actual_risk = units * stop_distance * quote_to_account_rate
     return float(units), float(actual_risk)

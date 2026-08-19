@@ -15,7 +15,12 @@ from llmfx.backtest.metrics import compute_stats
 from llmfx.config import AppConfig
 from llmfx.data.synthetic import generate_synthetic_candles
 from llmfx.domain.types import Candle, ExitReason, Position, Side, Signal, StructureSnapshot, SwingLabel, Trend
-from llmfx.execution.fills import FillModel, evaluate_exit
+from llmfx.execution.fills import (
+    FillModel,
+    evaluate_exit,
+    rollovers_crossed,
+    trade_costs,
+)
 
 START = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
@@ -162,7 +167,7 @@ def test_gap_through_the_stop_fills_at_the_open():
 
 def test_slippage_applies_to_stops_but_not_to_targets():
     fills = FillModel(pip_size=0.01, spread_pips=2.0, slippage_pips=1.0)
-    cost = fills.cost_per_side  # (2/2 + 1) * 0.01 = 0.02
+    cost = fills.cost_per_side(99.0)  # (2/2 + 1) * 0.01 = 0.02
 
     stop_fill = fills.exit(Side.LONG, 99.0, market=True)
     target_fill = fills.exit(Side.LONG, 102.0, market=False)
@@ -174,3 +179,69 @@ def test_entry_fill_is_adverse_for_both_sides():
     fills = FillModel(pip_size=0.01, spread_pips=2.0, slippage_pips=0.0)
     assert fills.entry(Side.LONG, 100.0) > 100.0
     assert fills.entry(Side.SHORT, 100.0) < 100.0
+
+
+# --- 価格比例コストと建玉管理料 -------------------------------------------
+# 暗号資産は価格水準が数倍動くため固定 pips ではコストを表せず、
+# レバレッジ手数料(0.04%/日)は数日保有すると効いてくる。
+
+
+def test_proportional_spread_scales_with_the_price_level():
+    fills = FillModel(pip_size=1.0, spread_pips=0.0, slippage_pips=0.0, spread_bps=2.0)
+    assert fills.cost_per_side(10_000_000.0) == pytest.approx(1_000.0)
+    assert fills.cost_per_side(3_000_000.0) == pytest.approx(300.0)
+
+
+def test_fixed_and_proportional_costs_add_up():
+    fills = FillModel(pip_size=1.0, spread_pips=100.0, slippage_pips=50.0, spread_bps=2.0)
+    # 固定 (100/2 + 50) * 1.0 = 100、比例 10,000,000 * 1bp = 1,000
+    assert fills.cost_per_side(10_000_000.0) == pytest.approx(1_100.0)
+
+
+def test_holding_cost_counts_only_the_rollovers_actually_crossed():
+    """GMO は日本時間 6:00(UTC 21:00)をまたぐたびに課金する。"""
+    day = datetime(2024, 3, 10, tzinfo=timezone.utc)
+    assert rollovers_crossed(day.replace(hour=10), day.replace(hour=20), 21) == 0
+    assert rollovers_crossed(day.replace(hour=10), day.replace(hour=23), 21) == 1
+    assert rollovers_crossed(
+        day.replace(hour=22), day.replace(hour=20) + timedelta(days=1), 21
+    ) == 0
+    assert rollovers_crossed(
+        day.replace(hour=10), day.replace(hour=22) + timedelta(days=2), 21
+    ) == 3
+
+
+def test_holding_cost_is_charged_on_notional_per_night():
+    config = AppConfig()
+    config.execution.daily_holding_cost_bps = 4.0  # GMO 暗号資産FX 0.04%/日
+    day = datetime(2024, 3, 10, tzinfo=timezone.utc)
+    costs = trade_costs(
+        config, units=0.1, entry_price=10_000_000.0, exit_price=10_000_000.0,
+        entry_time=day.replace(hour=10), exit_time=day.replace(hour=23),
+    )
+    # 建玉評価額 1,000,000 円 x 4bp x 1 泊 = 400 円
+    assert costs.commission == pytest.approx(0.0)
+    assert costs.holding == pytest.approx(400.0)
+
+
+def test_no_holding_cost_when_the_rate_is_zero():
+    """FX のスワップは方向で符号が変わるため、この一律コストは既定で無効。"""
+    config = AppConfig()
+    day = datetime(2024, 3, 10, tzinfo=timezone.utc)
+    costs = trade_costs(
+        config, units=1000.0, entry_price=150.0, exit_price=151.0,
+        entry_time=day.replace(hour=10), exit_time=day + timedelta(days=5),
+    )
+    assert costs.holding == pytest.approx(0.0)
+
+
+def test_commission_bps_is_charged_on_both_legs():
+    """GMO 取引所現物の Taker 0.05% は往復で 0.1% になる。"""
+    config = AppConfig()
+    config.execution.commission_bps = 5.0
+    day = datetime(2024, 3, 10, tzinfo=timezone.utc)
+    costs = trade_costs(
+        config, units=0.1, entry_price=10_000_000.0, exit_price=10_000_000.0,
+        entry_time=day.replace(hour=10), exit_time=day.replace(hour=12),
+    )
+    assert costs.commission == pytest.approx(1_000.0)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from llmfx.config import AppConfig
 from llmfx.data.synthetic import generate_synthetic_candles
@@ -89,3 +90,35 @@ def test_trend_origin_targets_are_further_than_nearest_structure():
     )
     assert nearest and origin
     assert np.median([s.rr for s in origin]) > np.median([s.rr for s in nearest])
+
+
+# --- 売買方向の制限 -------------------------------------------------------
+# 暗号資産の現物は売り建てができない。レバレッジと比較するために必要。
+
+
+def test_disallowing_shorts_drops_only_short_signals():
+    candles = generate_synthetic_candles(count=6000, seed=20260810)
+
+    both = AppConfig()
+    both.entry.min_rr = 1e-6
+    plain = DowReversalStrategy(both)
+    all_signals = [s for c in candles if (s := plain.update(c))]
+
+    long_only = AppConfig.from_dict(both.to_dict())
+    long_only.entry.allow_short = False
+    strategy = DowReversalStrategy(long_only)
+    kept = [s for c in candles if (s := strategy.update(c))]
+
+    assert all(s.side is Side.LONG for s in kept)
+    assert len(kept) == sum(1 for s in all_signals if s.side is Side.LONG)
+    assert any(r.reason == "short_not_allowed" for r in strategy.rejections)
+
+
+def test_both_directions_disabled_is_a_config_error():
+    from llmfx.config import ConfigError
+
+    config = AppConfig()
+    config.entry.allow_long = False
+    config.entry.allow_short = False
+    with pytest.raises(ConfigError, match="allow_long"):
+        config.validate()

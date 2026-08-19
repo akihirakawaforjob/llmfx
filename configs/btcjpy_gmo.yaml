@@ -1,0 +1,91 @@
+# GMOコイン 暗号資産FX(BTC_JPY)向け設定
+#
+# 売買ロジックは configs/default.yaml と同一。銘柄固有の値だけを変えている。
+# ロジックを揃えてあるのは、FX と暗号資産の成績差が「相場の違い」によるもので
+# あって「パラメータを弄った結果」ではないと言い切れるようにするため。
+#
+# コストの根拠(2026-08 時点、Public API と GMOコインの公表値で確認):
+#   スプレッド      実測 0.9〜1.4 bp(BTC 約 1,035 万円で 900〜1,440 円)
+#   取引手数料      0(暗号資産FX。取引所現物 BTC は Taker 0.05% / Maker -0.01%)
+#   レバレッジ手数料 建玉評価額の 0.04%/日、日本時間 6:00 = UTC 21:00 をまたぐと発生
+#
+# 現物(symbol: BTC)で回す場合は commission_bps を 5.0、
+# daily_holding_cost_bps を 0、allow_short を false にすること。
+
+instrument:
+  symbol: BTC_JPY
+  granularity: M15
+  pip_size: 1.0             # GMO の BTC_JPY は呼値(tickSize)1 円
+  quote_to_account_rate: 1.0
+  min_order_size: 0.001     # GMO BTC_JPY の最小注文数量
+  size_step: 0.001          # 同・数量の刻み
+
+swing:
+  left: 3
+  right: 3
+  atr_period: 14
+  min_swing_atr: 0.6
+
+entry:
+  require_prior_trend: true
+  max_break_extension_atr: 1.0
+  stop_buffer_atr: 0.15
+  min_rr: 2.0
+  min_stop_distance_atr: 0.25
+  max_stop_distance_atr: 4.0
+  stop_basis_mode: trend_extreme
+  # 上位足フィルタ。null で無効(下位足の転換だけで判断する従来の挙動)。
+  # 実測ではこれを有効にしてもエッジは生まれなかった(CLAUDE.md 参照)。
+  higher_timeframe: null
+  require_htf_alignment: true
+  htf_proximity_atr: null
+  htf_max_bars: null
+  target_strategies:
+    - trend_origin
+    - measured_move
+    - atr
+  structure_lookback_swings: 20
+  measured_move_mult: 1.0
+  atr_target_mult: 3.0
+  min_target_distance_atr: 0.5
+
+risk:
+  initial_equity: 1000000.0   # 100 万円
+  risk_per_trade: 0.02
+  max_risk_per_trade: 0.05
+  max_daily_loss: 0.06
+  max_drawdown_stop: 0.25
+  max_concurrent_positions: 1
+  max_leverage: 2.0         # 国内の暗号資産は法令で 2 倍が上限
+  monthly_target: 1.4
+  compounding: true
+
+execution:
+  entry_mode: next_open
+  # 価格水準が 5 年で 8.8 倍動くため、固定 pips ではなく価格比例で持つ。
+  # 3.0 bp = 片道 1.5 bp。実測の片道スプレッド 0.5 bp にスリッページを上乗せ。
+  spread_pips: 0.0
+  slippage_pips: 0.0
+  spread_bps: 3.0
+  commission_bps: 0.0       # 暗号資産FX は取引手数料無料
+  commission_per_unit: 0.0
+  daily_holding_cost_bps: 4.0   # レバレッジ手数料 0.04%/日
+  holding_cost_rollover_hour_utc: 21  # 日本時間 6:00
+  break_even_at_r: 1.0
+  trail_to_structure: true
+  max_bars_in_trade: 400
+  exit_on_structure_flip: true
+
+llm:
+  enabled: false
+  model: claude-opus-5
+  effort: medium
+  max_tokens: 8000
+  gate_enabled: true
+  journal_enabled: true
+  fail_open: true
+  cache_path: data/llm_cache.sqlite
+  timeout_seconds: 120.0
+
+backtest:
+  warmup_bars: 100

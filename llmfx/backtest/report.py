@@ -62,6 +62,13 @@ def feasibility_analysis(stats: PerformanceStats, ruin_threshold: float = 0.5) -
     return result
 
 
+def _share(cost: float, gross: float) -> str:
+    """コストがコスト差引前の損益の何割かを表す。損益がマイナスなら比率は無意味。"""
+    if gross <= 0:
+        return "—"
+    return f"{cost / gross:.1%}"
+
+
 def render_report(result: BacktestResult, stats: PerformanceStats) -> str:
     cfg = result.config
     lines: list[str] = []
@@ -77,7 +84,25 @@ def render_report(result: BacktestResult, stats: PerformanceStats) -> str:
         )
     add(f"- 1 トレードあたりリスク: {cfg.risk.risk_per_trade:.2%}")
     add(f"- 最小リスクリワード: {cfg.entry.min_rr:.2f}")
-    add(f"- 約定モデル: {cfg.execution.entry_mode} / スプレッド {cfg.execution.spread_pips} pips")
+    spread_desc = f"{cfg.execution.spread_pips} pips"
+    if cfg.execution.spread_bps:
+        spread_desc += f" + {cfg.execution.spread_bps} bp"
+    add(f"- 約定モデル: {cfg.execution.entry_mode} / スプレッド {spread_desc}")
+    if cfg.entry.higher_timeframe:
+        detail = f"上位足 {cfg.entry.higher_timeframe}"
+        if cfg.entry.require_htf_alignment:
+            detail += " / 方向一致"
+        if cfg.entry.htf_proximity_atr:
+            detail += f" / 極値から {cfg.entry.htf_proximity_atr} ATR 以内"
+        add(f"- {detail}")
+    if cfg.execution.commission_bps:
+        add(f"- 取引手数料: 片道 {cfg.execution.commission_bps} bp(往復 {cfg.execution.commission_bps * 2} bp)")
+    if cfg.execution.daily_holding_cost_bps:
+        annual = cfg.execution.daily_holding_cost_bps * 365 / 100.0
+        add(
+            f"- 建玉管理料: {cfg.execution.daily_holding_cost_bps} bp/日 "
+            f"(年率換算 約 {annual:.1f}%)"
+        )
     if result.halt_reason:
         add(f"- ⚠️ **{result.halt_reason}**")
     add("")
@@ -103,6 +128,36 @@ def render_report(result: BacktestResult, stats: PerformanceStats) -> str:
     add(f"| シャープレシオ(年率換算) | {stats.sharpe_daily:.2f} |")
     add(f"| 平均保有本数 | {stats.avg_bars_held:.1f} |")
     add("")
+
+    commission = sum(t.commission_paid for t in result.trades)
+    holding = sum(t.holding_cost_paid for t in result.trades)
+    if commission or holding:
+        net = stats.final_equity - stats.initial_equity
+        gross = net + commission + holding
+        add("## 取引コスト")
+        add("")
+        add("価格差だけで見た損益から、実際に引かれた費用を差し引いた内訳。")
+        add("")
+        add("| 項目 | 金額 | 純損益に対する比 |")
+        add("| --- | ---: | ---: |")
+        add(f"| コスト差引前の損益 | {gross:+,.0f} | — |")
+        add(f"| 手数料 | {-commission:+,.0f} | {_share(commission, gross)} |")
+        add(f"| 建玉管理料 | {-holding:+,.0f} | {_share(holding, gross)} |")
+        add(f"| **手取り** | **{net:+,.0f}** | — |")
+        add("")
+        if stats.trades:
+            add(
+                f"1 トレードあたり平均 {(commission + holding) / stats.trades:,.0f} "
+                f"(手数料 {commission / stats.trades:,.0f} / "
+                f"建玉管理料 {holding / stats.trades:,.0f})"
+            )
+            add("")
+        if gross > 0 and (commission + holding) / gross >= 0.3:
+            add(
+                "> ⚠️ コストがコスト差引前の損益の 3 割以上を食っています。"
+                "保有期間の短縮か、より値幅の大きい足での検証を検討してください。"
+            )
+            add("")
 
     add("## シグナルの内訳")
     add("")

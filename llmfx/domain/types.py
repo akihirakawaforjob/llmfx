@@ -170,6 +170,9 @@ class Trade:
     structure: StructureSnapshot | None = None
     max_favorable_excursion: float = 0.0
     max_adverse_excursion: float = 0.0
+    commission_paid: float = 0.0
+    holding_cost_paid: float = 0.0
+    """建玉管理料(暗号資産FX のレバレッジ手数料など)。日跨ぎで発生する。"""
     entry_note: dict | None = None
     exit_note: dict | None = None
     gate_decision: dict | None = None
