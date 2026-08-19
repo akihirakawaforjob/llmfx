@@ -67,6 +67,19 @@ class DowReversalStrategy:
         self._atr_history: deque[float] = deque(
             maxlen=max(2, config.entry.atr_percentile_lookback)
         )
+        # 損切り追従に使う上位足。エントリー判定用の htf とは別に持つ
+        # (役割が違うので、別々の足を指定できるようにしておく)。
+        self.trail_filter: HigherTimeframeFilter | None = None
+        if config.execution.trail_timeframe is not None:
+            self.trail_filter = HigherTimeframeFilter(
+                minutes=granularity_minutes(config.execution.trail_timeframe),
+                left=config.swing.left,
+                right=config.swing.right,
+                atr_period=config.swing.atr_period,
+                min_swing_atr=config.swing.min_swing_atr,
+                require_prior_trend=config.entry.require_prior_trend,
+                stop_basis_mode=config.entry.stop_basis_mode,
+            )
         self.rejections: list[RejectedSignal] = []
         self.last_event: ReversalEvent | None = None
         """直近バーで検出されたダウ転換。RR フィルタで落ちた場合も残る。"""
@@ -86,6 +99,8 @@ class DowReversalStrategy:
         # この足の判断に使っても先読みにはならない。
         if self.htf is not None:
             self.htf.update(candle)
+        if self.trail_filter is not None:
+            self.trail_filter.update(candle)
         event = self.analyzer.update(candle)
         self.last_event = event
         # 分位の比較対象は「この足より前」の ATR。現在値を混ぜると

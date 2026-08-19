@@ -326,9 +326,14 @@ class BacktestEngine:
     def _manage_stop(
         self, position: Position, strategy: DowReversalStrategy, candle: Candle
     ) -> None:
-        anchor = strategy.analyzer.detector.last_swing(
-            SwingType.LOW if position.side is Side.LONG else SwingType.HIGH
-        )
+        swing_type = SwingType.LOW if position.side is Side.LONG else SwingType.HIGH
+        # 追従の基準足。上位足を指定すると更新が遅くなり、調整波で刈られにくい。
+        detector = strategy.analyzer.detector
+        if self.config.execution.trail_timeframe is not None:
+            if strategy.trail_filter is None:
+                return  # 上位足がまだ 1 本も確定していない
+            detector = strategy.trail_filter.analyzer.detector
+        anchor = detector.last_swing(swing_type)
         update_stop(
             position=position,
             candle=candle,
