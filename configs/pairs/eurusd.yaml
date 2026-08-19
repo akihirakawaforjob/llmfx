@@ -1,0 +1,59 @@
+# EUR_USD — 売買ロジックは全銘柄で同一。銘柄固有の値だけを変えている。
+#
+# quote_to_account_rate は 1.0 のまま。クオート通貨が円でない銘柄では
+# 円換算の絶対額はずれるが、**R 倍数(損益 / リスク額)は換算レートが
+# 分子分母で相殺するため正しい**。分析はすべて R で行うのでこれで足りる。
+# 円建ての絶対額を見るときは実レートを入れ直すこと。
+instrument:
+  symbol: EUR_USD
+  granularity: M15
+  pip_size: 0.0001
+  quote_to_account_rate: 1.0
+  min_order_size: 1000.0
+  size_step: 1000.0
+swing: {left: 3, right: 3, atr_period: 14, min_swing_atr: 0.6}
+entry:
+  require_prior_trend: true
+  max_break_extension_atr: 1.0
+  stop_buffer_atr: 0.15
+  min_rr: 2.0
+  min_stop_distance_atr: 0.25
+  max_stop_distance_atr: 4.0
+  stop_basis_mode: trend_extreme
+  higher_timeframe: null
+  require_htf_alignment: true
+  htf_alignment_source: reversal
+  htf_proximity_atr: null
+  allowed_hours_utc: []
+  blocked_weekdays: []
+  nfp_blackout_minutes: 0
+  max_atr_percentile: null
+  target_strategies: [trend_origin, measured_move, atr]
+  structure_lookback_swings: 20
+  measured_move_mult: 1.0
+  atr_target_mult: 3.0
+  min_target_distance_atr: 0.5
+risk:
+  initial_equity: 1000000.0
+  risk_per_trade: 0.02
+  max_risk_per_trade: 0.05
+  max_daily_loss: 0.06
+  max_drawdown_stop: 0.25
+  max_concurrent_positions: 1
+  max_leverage: 25.0
+  monthly_target: 1.4
+  compounding: true
+execution:
+  entry_mode: next_open
+  spread_pips: 0.3
+  slippage_pips: 0.1
+  break_even_at_r: 1.0
+  trail_to_structure: true
+  max_bars_in_trade: 400
+  exit_on_structure_flip: true
+llm: {enabled: false}
+backtest:
+  warmup_bars: 100
+  # 26 年あるので 3 分割する。開発用 2000-2015 / 予備 2016-2019 / 検証用 2020 以降。
+  # 検証用は最後の一発勝負にだけ使う。`--split` の既定は dev。
+  holdout_start: "2020-01-01"
