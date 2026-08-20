@@ -235,6 +235,13 @@ class DowReversalStrategy:
             self._reject(event, "volatility_too_high")
             return None
 
+        # レンジ(高値も安値も一方向に揃っていない)では、抵抗を上抜けても
+        # 帯の中へ戻される。裁量の定石「レンジは触らない」を構造で表したもの。
+        # 参照するのは確定済みスイングだけなので先読みにならない。
+        if cfg.skip_range_structure and self.analyzer.structure_trend() is Trend.RANGE:
+            self._reject(event, "structure_is_range")
+            return None
+
         # 上位足フィルタ: 下位足の転換を「候補」に格下げし、上位足の転換方向と
         # その後の極値(押し安値 / 戻り高値)の付近だけを採る。
         # pullback では待機状態そのものが上位足の方向を持っているので掛けない

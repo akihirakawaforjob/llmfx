@@ -171,3 +171,35 @@ def test_rr_filter_still_applies_without_a_take_profit():
     kept = [s for c in candles if (s := strategy.update(c))]
     assert not kept
     assert any(r.reason == "rr_below_minimum" for r in strategy.rejections)
+
+
+# --- レンジを触らない -----------------------------------------------------
+
+
+def test_range_filter_only_removes_signals():
+    """レンジ除外は選別であって、新しいシグナルを作ってはいけない。"""
+    _s, loose = collect_signals({"entry": {"skip_range_structure": False}})
+    _s, strict = collect_signals({"entry": {"skip_range_structure": True}})
+    assert len(strict) <= len(loose)
+    kept = {(s.time, s.side) for s in strict}
+    assert kept <= {(s.time, s.side) for s in loose}, "元に無いシグナルが生えている"
+
+
+def test_range_filter_leaves_no_range_entries_behind():
+    """通したシグナルの時点で、構造がレンジであってはならない。"""
+    from llmfx.domain.types import Trend
+
+    config = AppConfig.from_dict({"entry": {"skip_range_structure": True}})
+    strategy = DowReversalStrategy(config)
+    checked = 0
+    for candle in generate_synthetic_candles(count=6000, seed=7):
+        if strategy.update(candle) is not None:
+            assert strategy.analyzer.structure_trend() is not Trend.RANGE
+            checked += 1
+    assert checked > 0, "検証できるだけのシグナルが出ていること"
+
+
+def test_range_filter_records_why_it_declined():
+    strategy, _signals = collect_signals({"entry": {"skip_range_structure": True}})
+    reasons = {r.reason for r in strategy.rejections}
+    assert "structure_is_range" in reasons
