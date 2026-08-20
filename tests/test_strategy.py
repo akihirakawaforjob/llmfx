@@ -203,3 +203,41 @@ def test_range_filter_records_why_it_declined():
     strategy, _signals = collect_signals({"entry": {"skip_range_structure": True}})
     reasons = {r.reason for r in strategy.rejections}
     assert "structure_is_range" in reasons
+
+
+# --- 1 つのトレンドにつき最初の押し目だけ ---------------------------------
+
+
+def test_first_pullback_only_removes_signals_without_inventing_any():
+    _s, loose = collect_signals({"entry": {"first_pullback_only": False}})
+    _s, strict = collect_signals({"entry": {"first_pullback_only": True}})
+    assert len(strict) < len(loose), "何も削れていないなら条件が効いていない"
+    assert ({(s.time, s.side) for s in strict}
+            <= {(s.time, s.side) for s in loose}), "元に無いシグナルが生えている"
+
+
+def test_first_pullback_only_takes_at_most_one_signal_per_trend():
+    """構造の向きが変わるまで、2 本目のシグナルを出してはいけない。"""
+    config = AppConfig.from_dict({"entry": {"first_pullback_only": True}})
+    strategy = DowReversalStrategy(config)
+    seen: dict[int, int] = {}
+    for candle in generate_synthetic_candles(count=6000, seed=7):
+        if strategy.update(candle) is not None:
+            epoch = strategy._trend_epoch
+            seen[epoch] = seen.get(epoch, 0) + 1
+    assert seen, "検証できるだけのシグナルが出ていること"
+    assert max(seen.values()) == 1, f"同じトレンドで複数回入っている: {seen}"
+
+
+def test_trend_epoch_advances_only_when_the_structure_turns():
+    config = AppConfig.from_dict({"entry": {"first_pullback_only": True}})
+    strategy = DowReversalStrategy(config)
+    prev_state, prev_epoch, turns = strategy._structure_state, strategy._trend_epoch, 0
+    for candle in generate_synthetic_candles(count=3000, seed=11):
+        strategy.update(candle)
+        moved = strategy._trend_epoch != prev_epoch
+        turned = strategy._structure_state is not prev_state
+        assert moved == turned, "向きが変わっていないのに世代が進んでいる"
+        turns += moved
+        prev_state, prev_epoch = strategy._structure_state, strategy._trend_epoch
+    assert turns > 0, "検証できるだけ向きが変わっていること"

@@ -1,6 +1,6 @@
-# EUR_USD — 売買ロジックは全銘柄で同一。銘柄固有の値だけを変えている。
+# USD_SGD — 売買ロジックは全銘柄で同一。銘柄固有の値だけを変えている。
 # quote_to_account_rate は 1.0。R 倍数は換算レートが相殺するため分析には支障ない。
-instrument: {symbol: EUR_USD, granularity: H1, pip_size: 0.0001, quote_to_account_rate: 1.0,
+instrument: {symbol: USD_SGD, granularity: H1, pip_size: 0.0001, quote_to_account_rate: 1.0,
   min_order_size: 1000.0, size_step: 1000.0}
 swing: {left: 3, right: 3, atr_period: 14, min_swing_atr: 0.6}
 entry:
@@ -29,7 +29,7 @@ risk: {initial_equity: 1000000.0, risk_per_trade: 0.02, max_risk_per_trade: 0.05
   max_leverage: 25.0, monthly_target: 1.4, compounding: true}
 execution:
   entry_mode: next_open
-  spread_pips: 0.3
+  spread_pips: 1.6
   slippage_pips: 0.1
   break_even_at_r: null
   trail_to_structure: false

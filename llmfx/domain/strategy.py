@@ -53,6 +53,11 @@ class DowReversalStrategy:
             require_prior_trend=trigger_needs_trend,
             stop_basis_mode=config.entry.stop_basis_mode,
         )
+        # 「1 つのトレンドにつき最初の押し目だけ」を数えるための状態。
+        self._structure_state: Trend = Trend.RANGE
+        self._trend_epoch = 0
+        self._entered_epoch = -1
+
         self.htf: HigherTimeframeFilter | None = None
         if config.entry.higher_timeframe is not None:
             self.htf = HigherTimeframeFilter(
@@ -115,15 +120,29 @@ class DowReversalStrategy:
             self._advance_pullback(candle)
         event = self.analyzer.update(candle)
         self.last_event = event
+        self._track_trend_epoch()
         # 分位の比較対象は「この足より前」の ATR。現在値を混ぜると
         # 自分自身との比較になって条件が緩む。判定後に積む。
         signal = self._build_signal(event) if event is not None else None
+        if signal is not None:
+            self._entered_epoch = self._trend_epoch
         atr = self.analyzer.atr
         if atr is not None and atr > 0:
             self._atr_history.append(atr)
         return signal
 
     # ------------------------------------------------------------------
+    def _track_trend_epoch(self) -> None:
+        """構造の向きが変わるたびに世代を進める。
+
+        「1 つのトレンドにつき最初の押し目だけ」を数えるための目印。
+        RANGE を挟んだかどうかに関わらず、向きが変われば別のトレンド。
+        """
+        current = self.analyzer.structure_trend()
+        if current is not self._structure_state:
+            self._structure_state = current
+            self._trend_epoch += 1
+
     def _reject(self, event: ReversalEvent, reason: str, rr: float | None = None) -> None:
         self.rejections.append(
             RejectedSignal(
@@ -240,6 +259,11 @@ class DowReversalStrategy:
         # 参照するのは確定済みスイングだけなので先読みにならない。
         if cfg.skip_range_structure and self.analyzer.structure_trend() is Trend.RANGE:
             self._reject(event, "structure_is_range")
+            return None
+
+        # 1 つのトレンドにつき最初の押し目だけを採る。
+        if cfg.first_pullback_only and self._entered_epoch == self._trend_epoch:
+            self._reject(event, "not_the_first_pullback")
             return None
 
         # 上位足フィルタ: 下位足の転換を「候補」に格下げし、上位足の転換方向と

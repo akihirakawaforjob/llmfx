@@ -166,6 +166,16 @@ class EntryConfig:
     """
     atr_percentile_lookback: int = 500
     """max_atr_percentile の判定に使う過去の本数。"""
+    first_pullback_only: bool = False
+    """1 つのトレンドにつき、最初の押し目 1 回しか入らない。
+
+    「レンジを抜けてトレンドが形成されたら、**次の**調整波の下位足ダウ転換で
+    入る」という指定の、「次の」を字義どおりに取ったもの。構造が
+    RANGE から UP / DOWN へ変わるたびに数え直す。
+
+    2 回目以降の押し目は、トレンドが進んだぶん起点から遠く、
+    利確目標(トレンド起点)までの距離が縮んでいる。ここを捨てるかどうか。
+    """
     skip_range_structure: bool = False
     """下位足の構造がレンジのときは見送る。
 

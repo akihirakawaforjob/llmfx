@@ -11,6 +11,7 @@ entry:
   min_stop_distance_atr: 0.25
   max_stop_distance_atr: 4.0
   stop_basis_mode: recent_swing
+  skip_range_structure: true
   mode: pullback
   higher_timeframe: D1
   htf_alignment_source: reversal
