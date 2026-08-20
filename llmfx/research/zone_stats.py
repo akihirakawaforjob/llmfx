@@ -82,11 +82,21 @@ def collect_touches(
     horizon: int = 24,
     rearm_atr: float = 1.0,
     warmup: int = 200,
+    one_per_bar: bool = False,
+    cooldown: int = 0,
 ) -> list[TouchEvent]:
     """帯への接触をすべて拾い、その後 `horizon` 本の値動きを測る。
 
     同じ帯に何本も張り付いている間は 1 回と数える。いったん帯から
     `rearm_atr` 倍だけ離れたら、次の接触を数えられるようにする。
+
+    標本の重なりについて。1 本の足が複数の帯に触れることがあり、
+    近い時刻の事象は同じ値動きを共有する。**重なった標本を独立として
+    数えると t 値が大きく出すぎる。**
+
+      one_per_bar  1 本の足からは最も近い帯の 1 件だけを採る
+      cooldown     直前の事象からこの本数が経つまで、新しい事象を採らない
+                   (`horizon` と同じ値にすれば、成果の窓が重ならない)
     """
     detector = SwingDetector(
         left=left, right=right, atr_period=atr_period, min_swing_atr=min_swing_atr
@@ -108,6 +118,12 @@ def collect_touches(
         if i < warmup or a <= 0 or i + horizon >= len(candles):
             continue
 
+        # 窓が重なる事象は記録しない。ここを緩めると t 値が嘘をつく。
+        # ただし「触れた」こと自体は数えるので、待機の状態は普段どおり動かす。
+        # そうしないと、同じ接触の途中の足が後から 1 回目として記録される。
+        cooling = bool(cooldown > 0 and events and i - events[-1].bar_index < cooldown)
+
+        found_here: list[TouchEvent] = []
         for zone in tracker.zones(bar_index=i, min_touches=min_touches):
             key = id(zone)
             overlaps = zone.low <= candle.high and zone.high >= candle.low
@@ -120,6 +136,8 @@ def collect_touches(
             if not armed.get(key, True):
                 continue
             armed[key] = False
+            if cooling:
+                continue
 
             from_below = candle.close < zone.price
             forward = candles[i + 1 : i + 1 + horizon]
@@ -137,7 +155,7 @@ def collect_touches(
                 c.close > zone.high if from_below else c.close < zone.low
                 for c in forward
             )
-            events.append(
+            found_here.append(
                 TouchEvent(
                     bar_index=i,
                     zone_price=zone.price,
@@ -151,6 +169,15 @@ def collect_touches(
                     broke=broke,
                 )
             )
+
+        if not found_here:
+            continue
+        if one_per_bar:
+            # 同じ足の複数の帯は同じ値動きを共有する。最も近い 1 つに絞る。
+            found_here = [
+                min(found_here, key=lambda e: abs(e.zone_price - candle.close))
+            ]
+        events.extend(found_here)
     return events
 
 

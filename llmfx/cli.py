@@ -160,6 +160,15 @@ def _build_parser() -> argparse.ArgumentParser:
     zones.add_argument("--min-touches", type=int, default=2)
     zones.add_argument("--max-age-bars", type=int, default=2000)
     zones.add_argument("--rearm-atr", type=float, default=1.0)
+    zones.add_argument(
+        "--one-per-bar", action="store_true",
+        help="1 本の足からは最も近い帯の 1 件だけを採る(標本の重なりを減らす)",
+    )
+    zones.add_argument(
+        "--cooldown", type=int, default=0,
+        help="直前の事象からこの本数が経つまで採らない。horizon と同じにすると窓が重ならない",
+    )
+    zones.add_argument("--out", default=None, help="事象を JSON へ書き出す(再集計用)")
     zones.add_argument("--split", default="dev", choices=["dev", "holdout", "all"])
     zones.set_defaults(handler=_cmd_zones)
 
@@ -537,6 +546,8 @@ def _cmd_zones(args: argparse.Namespace) -> int:
             min_touches=args.min_touches,
             horizon=args.horizon,
             rearm_atr=args.rearm_atr,
+            one_per_bar=args.one_per_bar,
+            cooldown=args.cooldown,
         )
         events.extend(found)
         print(f"  {Path(path).stem}: {len(found):,} 件", file=sys.stderr)
@@ -562,6 +573,35 @@ def _cmd_zones(args: argparse.Namespace) -> int:
 
     show("試された回数で分ける", bucket_by_touches(events))
     show("守り手が持ちこたえているかで分ける", bucket_by_defence(events))
+
+    if args.cooldown < args.horizon and not args.one_per_bar:
+        print("注意: 事象の成果の窓が重なっています。t 値は独立を仮定した値なので",
+              file=sys.stderr)
+        print("      大きく出すぎます。--cooldown と --one-per-bar で確かめること。",
+              file=sys.stderr)
+
+    if args.out:
+        import json
+
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump(
+                [
+                    {
+                        "i": e.bar_index, "zone": round(e.zone_price, 6),
+                        "n": e.touches,
+                        "def": None if e.defence is None else round(e.defence, 4),
+                        "below": e.from_below,
+                        "move": round(e.fade_move, 4),
+                        "fmax": round(e.fade_max, 4),
+                        "bmax": round(e.break_max, 4),
+                        "broke": e.broke,
+                    }
+                    for e in events
+                ],
+                fh,
+            )
+        print(f"事象を {args.out} へ書き出しました", file=sys.stderr)
     return 0
 
 

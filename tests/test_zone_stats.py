@@ -127,3 +127,36 @@ def test_buckets_cover_every_event_exactly_once():
 def test_no_events_gives_no_buckets():
     assert bucket_by_touches([]) == []
     assert bucket_by_defence([]) == []
+
+
+# --- 標本の重なり ---------------------------------------------------------
+
+
+def test_one_per_bar_keeps_only_the_nearest_zone():
+    """1 本の足が複数の帯に触れると、同じ値動きを何度も数えることになる。"""
+    candles = generate_synthetic_candles(count=3000, seed=5)
+    everything = collect_touches(candles, horizon=12)
+    single = collect_touches(candles, horizon=12, one_per_bar=True)
+    assert len(single) < len(everything)
+    bars = [e.bar_index for e in single]
+    assert len(bars) == len(set(bars)), "同じ足から 2 件以上採っている"
+
+
+def test_cooldown_stops_the_forward_windows_from_overlapping():
+    """窓が重なった標本を独立として数えると、t 値が大きく出すぎる。"""
+    candles = generate_synthetic_candles(count=3000, seed=5)
+    events = collect_touches(candles, horizon=20, one_per_bar=True, cooldown=20)
+    assert events
+    gaps = [b - a for a, b in zip(
+        [e.bar_index for e in events], [e.bar_index for e in events][1:]
+    )]
+    assert all(g >= 20 for g in gaps), f"窓が重なっている: 最小 {min(gaps)}"
+
+
+def test_cooldown_does_not_invent_events():
+    candles = generate_synthetic_candles(count=3000, seed=5)
+    loose = {(e.bar_index, round(e.zone_price, 6))
+             for e in collect_touches(candles, horizon=20, one_per_bar=True)}
+    strict = {(e.bar_index, round(e.zone_price, 6))
+              for e in collect_touches(candles, horizon=20, one_per_bar=True, cooldown=20)}
+    assert strict <= loose, "元に無い事象が生えている"
