@@ -30,7 +30,15 @@ from ..domain.types import (
     SwingType,
     Trade,
 )
-from ..execution.fills import FillModel, evaluate_exit, trade_costs, update_stop
+from ..execution.fills import (
+    FillModel,
+    TradeCosts,
+    apply_partial_exit,
+    evaluate_exit,
+    evaluate_partial_exit,
+    trade_costs,
+    update_stop,
+)
 
 
 class EntryGate(Protocol):
@@ -139,6 +147,13 @@ class BacktestEngine:
                             trade, self._context(strategy, candle, index, equity)
                         )
                         trade.exit_note = note
+
+            # 2b) 一部利確。損切りに触れた足では成立しないので、
+            #     必ず損切り判定の後に置く。
+            if position is not None:
+                level = evaluate_partial_exit(position, candle, cfg)
+                if level is not None:
+                    equity += apply_partial_exit(position, level, cfg)
 
             # 3) 確定足を戦略へ流し込む(スイング更新とダウ転換の検出)。
             signal = strategy.update(candle)
@@ -363,13 +378,28 @@ class BacktestEngine:
             entry_time=position.entry_time,
             exit_time=candle.time,
         )
-        pnl = gross - costs.total
+        if position.scaled_units > 0:
+            # 一部利確ぶんにも手数料はかかる。数量が減ったぶんだけ
+            # 安く見積もると、分割決済が実際より得に見える。
+            scaled = trade_costs(
+                self.config,
+                units=position.scaled_units,
+                entry_price=position.entry_price,
+                exit_price=exit_price,
+                entry_time=position.entry_time,
+                exit_time=candle.time,
+            )
+            costs = TradeCosts(
+                commission=costs.commission + scaled.commission,
+                holding=costs.holding + scaled.holding,
+            )
+        pnl = gross + position.realized_pnl - costs.total
         new_equity = equity + pnl
         r_multiple = pnl / position.risk_amount if position.risk_amount > 0 else 0.0
 
         trade = Trade(
             side=position.side,
-            units=position.units,
+            units=position.units + position.scaled_units,
             entry_time=position.entry_time,
             entry_price=position.entry_price,
             exit_time=candle.time,
@@ -388,6 +418,7 @@ class BacktestEngine:
             structure=position.signal.structure,
             max_favorable_excursion=position.max_favorable_excursion,
             max_adverse_excursion=position.max_adverse_excursion,
+            scaled_out=position.scaled_out,
             commission_paid=costs.commission,
             holding_cost_paid=costs.holding,
             entry_note=position.entry_note,

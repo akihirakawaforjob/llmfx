@@ -156,6 +156,76 @@ def evaluate_exit(
     return None
 
 
+def evaluate_partial_exit(
+    position: Position,
+    candle: Candle,
+    config: AppConfig,
+) -> float | None:
+    """このバーで一部利確が成立するなら、その約定価格を返す。
+
+    水準は指値なのでスリッページを乗せない。ただし **同じ足で損切りにも
+    触れていたら成立させない**。足の中の順序が分からない以上、損切りが
+    先に約定した扱いにするのがこのプロジェクトの決まりで、
+    そこを緩めると「都合の良い順序」を仮定したことになる。
+    """
+    level_r = config.execution.partial_exit_at_r
+    if level_r is None or position.scaled_out or position.initial_risk_per_unit <= 0:
+        return None
+
+    long = position.side is Side.LONG
+    distance = position.initial_risk_per_unit * level_r
+    level = position.entry_price + distance if long else position.entry_price - distance
+
+    reached = candle.high >= level if long else candle.low <= level
+    if not reached:
+        return None
+
+    # 損切りに触れた足では成立させない(窓開けを含む)。
+    touched_stop = (
+        candle.low <= position.stop_loss or candle.open <= position.stop_loss
+        if long
+        else candle.high >= position.stop_loss or candle.open >= position.stop_loss
+    )
+    if touched_stop:
+        return None
+    return level
+
+
+def apply_partial_exit(
+    position: Position,
+    price: float,
+    config: AppConfig,
+) -> float:
+    """一部を利確し、確定した損益を建玉へ積む。返り値は確定した損益。
+
+    残玉の損切りを建値へ移すかは `break_even_after_partial` で決める。
+    """
+    cfg = config.execution
+    units = position.units * cfg.partial_exit_fraction
+    move = (
+        price - position.entry_price
+        if position.side is Side.LONG
+        else position.entry_price - price
+    )
+    pnl = move * units * config.instrument.quote_to_account_rate
+
+    position.units -= units
+    position.scaled_units += units
+    position.realized_pnl += pnl
+    position.scaled_out = True
+
+    if cfg.break_even_after_partial:
+        improves = (
+            position.entry_price > position.stop_loss
+            if position.side is Side.LONG
+            else position.entry_price < position.stop_loss
+        )
+        if improves:
+            position.stop_loss = position.entry_price
+            position.moved_to_break_even = True
+    return pnl
+
+
 def update_stop(
     position: Position,
     candle: Candle,

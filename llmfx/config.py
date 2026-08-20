@@ -288,6 +288,26 @@ class ExecutionConfig:
     """
     holding_cost_rollover_hour_utc: int = 21
     """持ち越し判定の時刻(UTC)。GMOコインは日本時間 6:00 = UTC 21:00。"""
+    partial_exit_at_r: float | None = None
+    """建玉が この R 倍だけ順行したら、一部を利確する(資金管理の一階)。
+
+    実測(FX 28 銘柄・開発用)では、**負けの 34.6% が一度 +1.0R まで
+    順行してから -1.0R で切られている。**入る場所ではなく持ち方で
+    失っているので、決済の型で拾える余地がある。
+
+    水準は指値として扱うのでスリッページを乗せない。ただし同じ足で
+    損切りにも触れていた場合は、足の中の順序が分からない以上、
+    **損切りが先に約定した扱い**にする(一部利確は成立しない)。
+    """
+    partial_exit_fraction: float = 0.5
+    """一部利確で落とす割合(0 〜 1)。残りはそのまま持つ。"""
+    break_even_after_partial: bool = False
+    """一部利確したら、残玉の損切りを建値へ移す。
+
+    一度 +L まで行った後に損切りへ当たるには必ず建値を通るので、
+    これを入れると「順行してから戻された負け」が実質ゼロになる。
+    そのぶん、押し目を作ってから伸びる勝ちも建値で切られる。
+    """
     break_even_at_r: float | None = 1.0
     """含み益がこの R 倍数に達したら損切りを建値へ。None で無効。"""
     trail_to_structure: bool = True
@@ -417,6 +437,14 @@ class AppConfig:
             0.0 < self.entry.max_atr_percentile <= 1.0
         ):
             raise ConfigError("entry.max_atr_percentile は 0 より大きく 1 以下です")
+        if self.execution.partial_exit_at_r is not None:
+            if self.execution.partial_exit_at_r <= 0:
+                raise ConfigError("execution.partial_exit_at_r は正の数です")
+            if not 0.0 < self.execution.partial_exit_fraction < 1.0:
+                raise ConfigError(
+                    "execution.partial_exit_fraction は 0 と 1 の間です"
+                    "(1.0 は全利確なので take_profit を使うこと)"
+                )
         if self.entry.mode not in {"breakout", "fade", "pullback"}:
             raise ConfigError("entry.mode は breakout / fade / pullback です")
         if self.entry.mode == "pullback" and self.entry.higher_timeframe is None:

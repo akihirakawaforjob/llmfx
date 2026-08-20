@@ -142,6 +142,12 @@ class Position:
     moved_to_break_even: bool = False
     max_favorable_excursion: float = 0.0
     max_adverse_excursion: float = 0.0
+    scaled_out: bool = False
+    """一部利確を済ませたか。1 建玉につき 1 回だけ。"""
+    realized_pnl: float = 0.0
+    """一部利確で確定済みの損益(口座通貨)。残玉の決済時に足す。"""
+    scaled_units: float = 0.0
+    """一部利確で落とした数量。手数料の計算に要る。"""
     entry_note: dict | None = None
     """LLM が書いたエントリー時の所感(あれば)。"""
 
@@ -170,6 +176,8 @@ class Trade:
     structure: StructureSnapshot | None = None
     max_favorable_excursion: float = 0.0
     max_adverse_excursion: float = 0.0
+    scaled_out: bool = False
+    """途中で一部利確したか。"""
     commission_paid: float = 0.0
     holding_cost_paid: float = 0.0
     """建玉管理料(暗号資産FX のレバレッジ手数料など)。日跨ぎで発生する。"""
