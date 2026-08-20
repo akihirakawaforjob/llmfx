@@ -150,6 +150,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     mt4.set_defaults(handler=_cmd_data_import_mt4)
 
+    zones = sub.add_parser(
+        "zones", help="抵抗帯に触れた後の値動きを数える(戦略ではなく観測)"
+    )
+    zones.add_argument("--data", nargs="+", required=True, help="CSV を複数指定できる")
+    zones.add_argument("--config", default=None, help="スイング設定を借りる YAML")
+    zones.add_argument("--horizon", type=int, default=24, help="接触後に見る本数")
+    zones.add_argument("--tolerance-atr", type=float, default=0.5)
+    zones.add_argument("--min-touches", type=int, default=2)
+    zones.add_argument("--max-age-bars", type=int, default=2000)
+    zones.add_argument("--rearm-atr", type=float, default=1.0)
+    zones.add_argument("--split", default="dev", choices=["dev", "holdout", "all"])
+    zones.set_defaults(handler=_cmd_zones)
+
     # -- backtest ------------------------------------------------------
     backtest = sub.add_parser("backtest", help="バックテストを実行")
     backtest.add_argument("--config", help="設定 YAML のパス")
@@ -489,6 +502,67 @@ def _apply_split(candles, config, args):
             file=sys.stderr,
         )
     return sliced
+
+
+def _cmd_zones(args: argparse.Namespace) -> int:
+    """帯への接触を全銘柄ぶん集めて、回数と食い込みで分けて表示する。
+
+    戦略ではないので取引しない。事象を数えるだけなので、標本は取引の
+    桁をはるかに超える(ダウ転換は 20 年 28 銘柄で 642 件しか無かった)。
+    """
+    from .backtest.split import split_candles
+    from .research.zone_stats import (
+        bucket_by_defence,
+        bucket_by_touches,
+        collect_touches,
+    )
+
+    base = AppConfig.load(args.config) if args.config else AppConfig.from_dict({})
+    events = []
+    for path in args.data:
+        candles = load_candles_csv(path)
+        if args.split != "all":
+            candles = split_candles(candles, base.backtest.holdout_start, args.split)
+        if len(candles) < 500:
+            print(f"{path}: 本数が足りません", file=sys.stderr)
+            continue
+        found = collect_touches(
+            candles,
+            left=base.swing.left,
+            right=base.swing.right,
+            atr_period=base.swing.atr_period,
+            min_swing_atr=base.swing.min_swing_atr,
+            tolerance_atr=args.tolerance_atr,
+            max_age_bars=args.max_age_bars,
+            min_touches=args.min_touches,
+            horizon=args.horizon,
+            rearm_atr=args.rearm_atr,
+        )
+        events.extend(found)
+        print(f"  {Path(path).stem}: {len(found):,} 件", file=sys.stderr)
+
+    if not events:
+        print("接触が 1 件も見つかりませんでした", file=sys.stderr)
+        return 2
+
+    print(f"\n帯への接触 {len(events):,} 件 / 接触後 {args.horizon} 本を観測")
+    print("跳ね返り = 帯へ来た向きの逆。正なら押し戻された。単位は ATR 倍。\n")
+
+    def show(title: str, buckets) -> None:
+        print(title)
+        print(f"{'':<30}{'件数':>7}{'跳ね返り平均':>13}{'中央':>8}{'t':>7}"
+              f"{'最大到達':>10}{'最大逆行':>10}{'抜けた':>8}")
+        print("-" * 93)
+        for b in buckets:
+            print(f"{b.label:<30}{b.count:>7}{b.mean_move:>+13.3f}"
+                  f"{b.median_move:>+8.3f}{b.tstat():>+7.2f}"
+                  f"{b.median_fade_max:>10.2f}{b.median_break_max:>10.2f}"
+                  f"{b.break_rate:>8.0%}")
+        print()
+
+    show("試された回数で分ける", bucket_by_touches(events))
+    show("守り手が持ちこたえているかで分ける", bucket_by_defence(events))
+    return 0
 
 
 def _cmd_backtest(args: argparse.Namespace) -> int:
