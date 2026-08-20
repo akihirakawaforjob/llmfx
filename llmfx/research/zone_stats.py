@@ -76,6 +76,12 @@ class TouchEvent:
     """同じ向きへの最大到達(ATR 倍)。"""
     follow_adverse: float
     """同じ向きに付いた場合の最大逆行(ATR 倍)。損切り幅の目安。"""
+    zone_width_atr: float = 0.0
+    """帯の幅を、測っている足の ATR で割ったもの。
+
+    損切りは帯の外に置くので、これがそのままリスク幅の下限になる。
+    上位足で入ると大きく、下位足で入ると小さい。**同じ値動きでも
+    取れる R 倍数がここで決まる。**"""
 
 
 def _atr_series(candles: list[Candle], period: int) -> list[float]:
@@ -237,6 +243,155 @@ def collect_touches(
             continue
         if one_per_bar:
             # 同じ足の複数の帯は同じ値動きを共有する。最も近い 1 つに絞る。
+            found_here = [
+                min(found_here, key=lambda e: abs(e.zone_price - candle.close))
+            ]
+        events.extend(found_here)
+    return events
+
+
+def collect_touches_mtf(
+    higher: list[Candle],
+    lower: list[Candle],
+    *,
+    higher_minutes: int,
+    left: int = 3,
+    right: int = 3,
+    atr_period: int = 14,
+    min_swing_atr: float = 0.6,
+    tolerance_atr: float = 0.5,
+    max_age_bars: int | None = 500,
+    min_touches: int = 2,
+    horizon: int = 48,
+    rearm_atr: float = 1.0,
+    warmup: int = 500,
+    one_per_bar: bool = True,
+    cooldown: int = 0,
+    confirm: int = 3,
+) -> list[TouchEvent]:
+    """帯は上位足で見つけ、接触と成果は下位足で測る。
+
+    利用者の指摘:「跳ね返りを刈るなら、なるべく小さい足で刈る方がいい。
+    上の方の足で見たところでエントリーポイントがわからん」。
+
+    影響は見やすさに留まらない。上位足の終値で入ると、その時点で帯から
+    離れているぶんだけ損切りが遠くなり、**同じ値動きでも取れる R 倍数が
+    小さくなる。**下位足なら帯の際で入れる。
+
+    先読み対策: 上位足のバーは **閉じてから** しか使わない。時刻 T の
+    上位足は T + higher_minutes になって初めて参照できる。
+    """
+    from datetime import timedelta
+
+    span = timedelta(minutes=higher_minutes)
+    detector = SwingDetector(
+        left=left, right=right, atr_period=atr_period, min_swing_atr=min_swing_atr
+    )
+    tracker = ZoneTracker(tolerance_atr=tolerance_atr, max_age_bars=max_age_bars)
+    atr_low = _atr_series(lower, atr_period)
+    atr_high = _atr_series(higher, atr_period)
+
+    events: list[TouchEvent] = []
+    armed: dict[int, bool] = {}
+    hi_i = 0          # 次に取り込む上位足
+    seen_swings = 0
+    hi_bar = -1       # 取り込み済みの上位足の本数 - 1(帯の年齢に使う)
+
+    for i, candle in enumerate(lower):
+        # 閉じた上位足だけを取り込む。
+        while hi_i < len(higher) and higher[hi_i].time + span <= candle.time:
+            detector.update(higher[hi_i])
+            hi_bar = hi_i
+            for swing in detector.swings[seen_swings:]:
+                tracker.update(swing, atr=atr_high[hi_i], bar_index=hi_bar)
+            seen_swings = len(detector.swings)
+            hi_i += 1
+
+        a = atr_low[i]
+        if i < warmup or a <= 0 or hi_bar < 0:
+            continue
+        if i + confirm + horizon >= len(lower):
+            continue
+
+        cooling = bool(cooldown > 0 and events and i - events[-1].bar_index < cooldown)
+        found_here: list[TouchEvent] = []
+
+        for zone in tracker.zones(bar_index=hi_bar, min_touches=min_touches):
+            key = id(zone)
+            overlaps = zone.low <= candle.high and zone.high >= candle.low
+            if not overlaps:
+                away = min(abs(candle.close - zone.low), abs(candle.close - zone.high))
+                if away > a * rearm_atr:
+                    armed[key] = True
+                continue
+            if not armed.get(key, True):
+                continue
+            armed[key] = False
+            if cooling:
+                continue
+
+            from_below = lower[i - 1].close < zone.price
+            decision = None
+            for j in range(i, min(i + confirm, len(lower))):
+                c = lower[j]
+                if from_below:
+                    if c.close > zone.high:
+                        decision, reaction = j, "抜けた"
+                        break
+                    if c.close < zone.low:
+                        decision, reaction = j, "弾かれた"
+                        break
+                else:
+                    if c.close < zone.low:
+                        decision, reaction = j, "抜けた"
+                        break
+                    if c.close > zone.high:
+                        decision, reaction = j, "弾かれた"
+                        break
+            if decision is None:
+                decision, reaction = min(i + confirm - 1, len(lower) - 1), "中"
+
+            forward = lower[decision + 1 : decision + 1 + horizon]
+            if len(forward) < horizon:
+                continue
+            start = lower[decision].close
+            sign = -1.0 if from_below else 1.0
+            moves = [(c.close - start) * sign / a for c in forward]
+            highs = [(c.high - start) * sign / a for c in forward]
+            lows = [(c.low - start) * sign / a for c in forward]
+            fade_max = max(max(highs), max(lows))
+            break_max = -min(min(highs), min(lows))
+            broke = any(
+                c.close > zone.high if from_below else c.close < zone.low
+                for c in forward
+            )
+            follow_sign = -1.0 if reaction == "抜けた" else 1.0
+            fhi = [v * follow_sign for v in highs]
+            flo = [v * follow_sign for v in lows]
+            found_here.append(
+                TouchEvent(
+                    bar_index=i,
+                    decision_index=decision,
+                    zone_price=zone.price,
+                    touches=zone.count,
+                    defence=zone.defence,
+                    from_below=from_below,
+                    atr=a,
+                    fade_move=moves[-1],
+                    fade_max=fade_max,
+                    break_max=break_max,
+                    broke=broke,
+                    reaction=reaction,
+                    follow_move=moves[-1] * follow_sign,
+                    follow_max=max(max(fhi), max(flo)),
+                    follow_adverse=-min(min(fhi), min(flo)),
+                    zone_width_atr=zone.width / a,
+                )
+            )
+
+        if not found_here:
+            continue
+        if one_per_bar:
             found_here = [
                 min(found_here, key=lambda e: abs(e.zone_price - candle.close))
             ]

@@ -183,3 +183,86 @@ def test_cooldown_does_not_invent_events():
     strict = {(e.bar_index, round(e.zone_price, 6))
               for e in collect_touches(candles, horizon=20, one_per_bar=True, cooldown=20)}
     assert strict <= loose, "元に無い事象が生えている"
+
+
+# --- 上位足で帯を見つけ、下位足で測る -------------------------------------
+
+
+def two_timeframes(count: int = 12000, seed: int = 5):
+    from llmfx.data.resample import resample_candles
+
+    lower = generate_synthetic_candles(count=count, seed=seed)
+    return resample_candles(lower, 60), lower
+
+
+def test_a_higher_timeframe_bar_is_not_used_before_it_closes():
+    """時刻 T の上位足は T+60 分になって初めて参照してよい。
+
+    ここを緩めると、下位足で見ているのに上位足の未確定バーを覗くことになり、
+    測っている数字が丸ごと嘘になる。
+    """
+    from llmfx.research.zone_stats import collect_touches_mtf
+
+    higher, lower = two_timeframes()
+    full = collect_touches_mtf(higher, lower, higher_minutes=60, horizon=24)
+    assert full, "検証できるだけの事象が出ていること"
+
+    # 上位足を後ろから 20 本削る。削った範囲が閉じる前の事象は変わらないはず。
+    cut_at = higher[-20].time
+    trimmed = collect_touches_mtf(
+        higher[:-20], lower, higher_minutes=60, horizon=24
+    )
+    before = [
+        (e.bar_index, e.decision_index, round(e.follow_move, 9))
+        for e in full
+        if lower[e.bar_index].time < cut_at
+    ]
+    after = [
+        (e.bar_index, e.decision_index, round(e.follow_move, 9))
+        for e in trimmed
+        if lower[e.bar_index].time < cut_at
+    ]
+    assert before == after, "上位足の未来を覗いている"
+
+
+def test_truncating_the_lower_series_does_not_change_earlier_events():
+    from llmfx.research.zone_stats import collect_touches_mtf
+
+    higher, lower = two_timeframes()
+    full = collect_touches_mtf(higher, lower, higher_minutes=60, horizon=24)
+    cut = collect_touches_mtf(higher, lower[:8000], higher_minutes=60, horizon=24)
+    assert cut
+
+    limit = 8000 - 24 - 3 - 1
+    a = [(e.bar_index, round(e.follow_move, 9)) for e in full if e.bar_index < limit]
+    b = [(e.bar_index, round(e.follow_move, 9)) for e in cut if e.bar_index < limit]
+    assert a == b, "打ち切ると過去の事象が変わっている = 先読み"
+
+
+def test_the_forward_window_never_runs_past_the_end():
+    from llmfx.research.zone_stats import collect_touches_mtf
+
+    higher, lower = two_timeframes()
+    events = collect_touches_mtf(higher, lower, higher_minutes=60, horizon=48)
+    assert events
+    assert max(e.decision_index for e in events) + 48 < len(lower)
+
+
+def test_zone_width_is_recorded_so_the_stop_distance_is_known():
+    """損切りは帯の外に置くので、帯の幅がそのままリスク幅の下限になる。"""
+    from llmfx.research.zone_stats import collect_touches_mtf
+
+    higher, lower = two_timeframes()
+    events = collect_touches_mtf(higher, lower, higher_minutes=60, horizon=24)
+    assert events
+    assert all(e.zone_width_atr > 0 for e in events)
+
+
+def test_one_per_bar_is_on_by_default_for_the_two_timeframe_version():
+    """下位足では同じ帯に何度も触れるので、既定で絞っておく。"""
+    from llmfx.research.zone_stats import collect_touches_mtf
+
+    higher, lower = two_timeframes()
+    events = collect_touches_mtf(higher, lower, higher_minutes=60, horizon=24)
+    bars = [e.bar_index for e in events]
+    assert len(bars) == len(set(bars))
