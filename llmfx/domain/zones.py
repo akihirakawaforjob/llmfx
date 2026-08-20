@@ -37,6 +37,17 @@ class Zone:
     low: float
     high: float
     touches: list[Swing] = field(default_factory=list)
+    penetrations: list[float] = field(default_factory=list)
+    """毎回の接触が、それまでの水準をどれだけ超えたか(ATR 倍)。
+
+    利用者の指摘:「大事なのは防衛ラインを見ることではなく、
+    **そこで誰が頑張っているか**を見ること」。守り手が持ちこたえて
+    いるなら、試すたびに食い込みは浅くなる。押し負けているなら深くなる。
+
+    比較の基準は **それ以前の接触だけ** から作る。今回の値を混ぜると
+    自分自身と比べることになり、常に 0 付近になってしまう。
+    最初の接触には比較対象が無いので記録しない(要素数は count - 1)。
+    """
 
     @property
     def price(self) -> float:
@@ -74,6 +85,25 @@ class Zone:
 
     def contains(self, price: float) -> bool:
         return self.low <= price <= self.high
+
+    @property
+    def defence(self) -> float | None:
+        """守り手が持ちこたえているか。負なら守勢が強い、正なら押されている。
+
+        直近の食い込みと、それ以前の食い込みの平均との差。
+        2 回目以降が 2 つ以上ないと判定できないので None を返す。
+        """
+        if len(self.penetrations) < 2:
+            return None
+        recent = self.penetrations[-1]
+        earlier = self.penetrations[:-1]
+        return recent - sum(earlier) / len(earlier)
+
+    @property
+    def holding(self) -> bool | None:
+        """食い込みが浅くなってきているか(守り手が勝っているか)。"""
+        trend = self.defence
+        return None if trend is None else trend < 0
 
 
 class ZoneTracker:
@@ -115,6 +145,15 @@ class ZoneTracker:
         tolerance = atr * self.tolerance_atr
         for zone in self._zones:
             if abs(swing.price - zone.price) <= tolerance:
+                # 食い込みは「それ以前の接触だけ」で作った水準と比べる。
+                # 今回の値を混ぜると自分自身との比較になってしまう。
+                level = zone.price
+                depth = (
+                    swing.price - level
+                    if swing.type is SwingType.HIGH
+                    else level - swing.price
+                )
+                zone.penetrations.append(depth / atr)
                 zone.touches.append(swing)
                 zone.low = min(zone.low, swing.price - tolerance / 2)
                 zone.high = max(zone.high, swing.price + tolerance / 2)

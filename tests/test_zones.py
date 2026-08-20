@@ -156,3 +156,58 @@ def test_a_swing_with_no_atr_is_skipped_rather_than_dividing_by_zero():
     tracker = ZoneTracker()
     assert tracker.update(swing(10, 100.0), atr=0.0, bar_index=13) is None
     assert tracker.zones(bar_index=100) == []
+
+
+# --- 誰が頑張っているか ---------------------------------------------------
+
+
+def test_penetration_is_measured_against_the_level_built_so_far():
+    """今回の値を基準に混ぜると、自分自身と比べることになる。"""
+    tracker = ZoneTracker(tolerance_atr=1.0)
+    feed(tracker, [swing(10, 100.0), swing(20, 100.5)], atr=1.0)
+    zone = tracker.zones(bar_index=100)[0]
+    assert len(zone.penetrations) == 1, "最初の接触には比較対象が無い"
+    assert zone.penetrations[0] == pytest.approx(0.5), "100.0 の水準を 0.5 超えた"
+
+
+def test_a_defended_zone_shows_shrinking_penetration():
+    """試すたびに浅くなる = 守り手が持ちこたえている。"""
+    tracker = ZoneTracker(tolerance_atr=2.0)
+    feed(tracker, [swing(10, 100.0), swing(20, 101.0),
+                   swing(30, 100.9), swing(40, 100.2)], atr=1.0)
+    zone = tracker.zones(bar_index=100)[0]
+    assert zone.holding is True, zone.penetrations
+
+
+def test_a_zone_losing_ground_shows_growing_penetration():
+    """試すたびに深くなる = 押し負けている。抜ける前触れ。"""
+    tracker = ZoneTracker(tolerance_atr=3.0)
+    feed(tracker, [swing(10, 100.0), swing(20, 100.2),
+                   swing(30, 100.6), swing(40, 101.8)], atr=1.0)
+    zone = tracker.zones(bar_index=100)[0]
+    assert zone.holding is False, zone.penetrations
+
+
+def test_the_low_side_is_the_mirror_image():
+    tracker = ZoneTracker(tolerance_atr=1.0)
+    feed(tracker, [swing(10, 100.0, SwingType.LOW),
+                   swing(20, 99.5, SwingType.LOW)], atr=1.0)
+    zone = tracker.zones(bar_index=100)[0]
+    assert zone.penetrations[0] == pytest.approx(0.5), "安値は下へ食い込む"
+
+
+def test_a_zone_touched_only_twice_cannot_say_who_is_winning():
+    tracker = ZoneTracker(tolerance_atr=1.0)
+    feed(tracker, [swing(10, 100.0), swing(20, 100.3)], atr=1.0)
+    zone = tracker.zones(bar_index=100)[0]
+    assert zone.defence is None and zone.holding is None
+
+
+def test_penetration_is_scaled_by_atr_so_instruments_compare():
+    tight = ZoneTracker(tolerance_atr=2.0)
+    feed(tight, [swing(10, 100.0), swing(20, 100.5)], atr=1.0)
+    wide = ZoneTracker(tolerance_atr=2.0)
+    feed(wide, [swing(10, 100.0), swing(20, 101.0)], atr=2.0)
+    a = tight.zones(bar_index=100)[0].penetrations[0]
+    b = wide.zones(bar_index=100)[0].penetrations[0]
+    assert a == pytest.approx(b), "ATR で割れば銘柄をまたいで比べられる"
