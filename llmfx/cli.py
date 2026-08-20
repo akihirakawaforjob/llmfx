@@ -169,6 +169,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="直前の事象からこの本数が経つまで採らない。horizon と同じにすると窓が重ならない",
     )
     zones.add_argument(
+        "--higher-granularity", default=None,
+        help="帯を見つける上位足(H1 など)。指定すると --data は下位足として扱う",
+    )
+    zones.add_argument(
         "--confirm", type=int, default=3,
         help="触れてから何本のうちに、弾かれた/抜けたを判定するか",
     )
@@ -524,11 +528,14 @@ def _cmd_zones(args: argparse.Namespace) -> int:
     桁をはるかに超える(ダウ転換は 20 年 28 銘柄で 642 件しか無かった)。
     """
     from .backtest.split import split_candles
+    from .data.resample import resample_candles
+    from .domain.mtf import granularity_minutes
     from .research.zone_stats import (
         bucket_by_defence,
         bucket_by_reaction,
         bucket_by_touches,
         collect_touches,
+        collect_touches_mtf,
     )
 
     base = AppConfig.load(args.config) if args.config else AppConfig.from_dict({})
@@ -540,8 +547,7 @@ def _cmd_zones(args: argparse.Namespace) -> int:
         if len(candles) < 500:
             print(f"{path}: 本数が足りません", file=sys.stderr)
             continue
-        found = collect_touches(
-            candles,
+        shared = dict(
             left=base.swing.left,
             right=base.swing.right,
             atr_period=base.swing.atr_period,
@@ -551,10 +557,22 @@ def _cmd_zones(args: argparse.Namespace) -> int:
             min_touches=args.min_touches,
             horizon=args.horizon,
             rearm_atr=args.rearm_atr,
-            one_per_bar=args.one_per_bar,
             cooldown=args.cooldown,
             confirm=args.confirm,
         )
+        if args.higher_granularity:
+            # 上位足は同じ系列から作る。別ファイルを突き合わせると
+            # 時刻のずれや欠損で静かにずれるため。
+            minutes = granularity_minutes(args.higher_granularity)
+            higher = resample_candles(candles, minutes)
+            found = collect_touches_mtf(
+                higher, candles, higher_minutes=minutes,
+                one_per_bar=True, **shared,
+            )
+        else:
+            found = collect_touches(
+                candles, one_per_bar=args.one_per_bar, **shared
+            )
         events.extend(found)
         print(f"  {Path(path).stem}: {len(found):,} 件", file=sys.stderr)
 
@@ -613,6 +631,11 @@ def _cmd_zones(args: argparse.Namespace) -> int:
                         "n": e.touches,
                         "def": None if e.defence is None else round(e.defence, 4),
                         "below": e.from_below,
+                        "react": e.reaction,
+                        "follow": round(e.follow_move, 4),
+                        "fmaxf": round(e.follow_max, 4),
+                        "fadv": round(e.follow_adverse, 4),
+                        "w": round(e.zone_width_atr, 4),
                         "move": round(e.fade_move, 4),
                         "fmax": round(e.fade_max, 4),
                         "bmax": round(e.break_max, 4),
