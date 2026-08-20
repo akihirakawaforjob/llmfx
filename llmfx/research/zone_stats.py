@@ -38,6 +38,9 @@ class TouchEvent:
     """帯に触れた 1 回分の記録."""
 
     bar_index: int
+    """帯に触れた足。"""
+    decision_index: int
+    """弾かれた / 抜けたが決まった足。成果はこの足の終値から測る。"""
     zone_price: float
     touches: int
     """それまでに何回試されたか(この回を含む)。"""
@@ -54,6 +57,25 @@ class TouchEvent:
     """突破方向への最大到達(ATR 倍)。逆張りした場合の最大逆行。"""
     broke: bool
     """観測期間のうちに帯の向こう側へ抜けたか。"""
+    reaction: str
+    """帯に触れた後、`confirm` 本のうちに何を示したか。
+    **帯に来た時点では方向を決めない。**
+
+      弾かれた  帯の手前側へ戻って引けた  -> 跳ね返る側に付く
+      抜けた    帯の向こう側で引けた      -> 抜けた側に付く
+      中        帯の中で引けた            -> まだ分からない
+
+    利用者の説明:「抵抗帯は抜けようが抜けまいが、相場に従うだけ」。
+    帯は方向の予測ではなく **判断の場所** で、どちらを向いたかは
+    触れた足が教える。ここを混ぜて平均すると、跳ね返りと突破が
+    打ち消し合ってきっかり 0 になる(実際そうなった)。
+    """
+    follow_move: float
+    """触れた足が示した向きへ、その後どれだけ動いたか(ATR 倍)。"""
+    follow_max: float
+    """同じ向きへの最大到達(ATR 倍)。"""
+    follow_adverse: float
+    """同じ向きに付いた場合の最大逆行(ATR 倍)。損切り幅の目安。"""
 
 
 def _atr_series(candles: list[Candle], period: int) -> list[float]:
@@ -84,6 +106,7 @@ def collect_touches(
     warmup: int = 200,
     one_per_bar: bool = False,
     cooldown: int = 0,
+    confirm: int = 3,
 ) -> list[TouchEvent]:
     """帯への接触をすべて拾い、その後 `horizon` 本の値動きを測る。
 
@@ -115,7 +138,7 @@ def collect_touches(
             tracker.update(swing, atr=a, bar_index=i)
         seen_swings = len(detector.swings)
 
-        if i < warmup or a <= 0 or i + horizon >= len(candles):
+        if i < warmup or a <= 0 or i + confirm + horizon >= len(candles):
             continue
 
         # 窓が重なる事象は記録しない。ここを緩めると t 値が嘘をつく。
@@ -139,11 +162,38 @@ def collect_touches(
             if cooling:
                 continue
 
-            from_below = candle.close < zone.price
-            forward = candles[i + 1 : i + 1 + horizon]
-            if not forward:
+            # どちら側から来たかは **触れる前** の位置で決める。触れた足の
+            # 終値で決めると、突き抜けて上で引けた足が「上から来た」判定に
+            # なり、突破が「弾かれた」に化ける(実際に化けていた)。
+            from_below = candles[i - 1].close < zone.price
+
+            # 帯に来た時点では方向を決めない。`confirm` 本のうちに
+            # どちらへ引けたかで決める。1 本で判定すると、突破が
+            # ほとんど拾えない(合成データで 851 件中 2 件しか出なかった)。
+            decision = None
+            for j in range(i, min(i + confirm, len(candles))):
+                c = candles[j]
+                if from_below:
+                    if c.close > zone.high:
+                        decision, reaction = j, "抜けた"
+                        break
+                    if c.close < zone.low:
+                        decision, reaction = j, "弾かれた"
+                        break
+                else:
+                    if c.close < zone.low:
+                        decision, reaction = j, "抜けた"
+                        break
+                    if c.close > zone.high:
+                        decision, reaction = j, "弾かれた"
+                        break
+            if decision is None:
+                decision, reaction = min(i + confirm - 1, len(candles) - 1), "中"
+
+            forward = candles[decision + 1 : decision + 1 + horizon]
+            if len(forward) < horizon:
                 continue
-            start = candle.close
+            start = candles[decision].close
             # 跳ね返り方向 = 帯へ来た向きの逆
             sign = -1.0 if from_below else 1.0
             moves = [(c.close - start) * sign / a for c in forward]
@@ -155,9 +205,18 @@ def collect_touches(
                 c.close > zone.high if from_below else c.close < zone.low
                 for c in forward
             )
+
+            # 示された向きへ付いた場合の成果。「中」は跳ね返り側を仮置き。
+            follow_sign = -1.0 if reaction == "抜けた" else 1.0
+            fmoves = [v * follow_sign for v in moves]
+            fhi = [v * follow_sign for v in highs]
+            flo = [v * follow_sign for v in lows]
+            follow_max = max(max(fhi), max(flo))
+            follow_adverse = -min(min(fhi), min(flo))
             found_here.append(
                 TouchEvent(
                     bar_index=i,
+                    decision_index=decision,
                     zone_price=zone.price,
                     touches=zone.count,
                     defence=zone.defence,
@@ -167,6 +226,10 @@ def collect_touches(
                     fade_max=fade_max,
                     break_max=break_max,
                     broke=broke,
+                    reaction=reaction,
+                    follow_move=fmoves[-1],
+                    follow_max=follow_max,
+                    follow_adverse=follow_adverse,
                 )
             )
 
@@ -190,6 +253,42 @@ class Bucket:
     fade_max: list[float] = field(default_factory=list)
     break_max: list[float] = field(default_factory=list)
     broke: list[bool] = field(default_factory=list)
+    follow: list[float] = field(default_factory=list)
+    follow_max: list[float] = field(default_factory=list)
+    follow_adverse: list[float] = field(default_factory=list)
+
+    def add(self, e: "TouchEvent") -> None:
+        self.moves.append(e.fade_move)
+        self.fade_max.append(e.fade_max)
+        self.break_max.append(e.break_max)
+        self.broke.append(e.broke)
+        self.follow.append(e.follow_move)
+        self.follow_max.append(e.follow_max)
+        self.follow_adverse.append(e.follow_adverse)
+
+    @property
+    def mean_follow(self) -> float:
+        return sum(self.follow) / len(self.follow) if self.follow else 0.0
+
+    @property
+    def median_follow(self) -> float:
+        return median(self.follow) if self.follow else 0.0
+
+    @property
+    def median_follow_max(self) -> float:
+        return median(self.follow_max) if self.follow_max else 0.0
+
+    @property
+    def median_follow_adverse(self) -> float:
+        return median(self.follow_adverse) if self.follow_adverse else 0.0
+
+    def follow_tstat(self) -> float:
+        n = len(self.follow)
+        if n < 2:
+            return 0.0
+        mean = self.mean_follow
+        var = sum((v - mean) ** 2 for v in self.follow) / (n - 1)
+        return mean / (var**0.5 / n**0.5) if var > 0 else 0.0
 
     @property
     def count(self) -> int:
@@ -235,10 +334,7 @@ def bucket_by_touches(events: list[TouchEvent], edges=(2, 3, 4, 6, 10)) -> list[
         b = Bucket(label)
         for e in events:
             if lo <= e.touches < hi:
-                b.moves.append(e.fade_move)
-                b.fade_max.append(e.fade_max)
-                b.break_max.append(e.break_max)
-                b.broke.append(e.broke)
+                b.add(e)
         if b.count:
             buckets.append(b)
     return buckets
@@ -251,8 +347,18 @@ def bucket_by_defence(events: list[TouchEvent]) -> list[Bucket]:
     unknown = Bucket("判定できない(接触が少ない)")
     for e in events:
         target = unknown if e.defence is None else (holding if e.defence < 0 else losing)
-        target.moves.append(e.fade_move)
-        target.fade_max.append(e.fade_max)
-        target.break_max.append(e.break_max)
-        target.broke.append(e.broke)
+        target.add(e)
     return [b for b in (holding, losing, unknown) if b.count]
+
+
+def bucket_by_reaction(events: list[TouchEvent]) -> list[Bucket]:
+    """触れた足が何を示したかでまとめる。
+
+    帯に来た時点では方向を決めず、示された向きに付く。混ぜて平均すると
+    跳ね返りと突破が打ち消し合って 0 になるので、必ず分けて見ること。
+    """
+    order = ["弾かれた", "中", "抜けた"]
+    buckets = {k: Bucket(k) for k in order}
+    for e in events:
+        buckets[e.reaction].add(e)
+    return [buckets[k] for k in order if buckets[k].count]

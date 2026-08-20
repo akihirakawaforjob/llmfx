@@ -64,17 +64,40 @@ def test_truncating_the_data_does_not_change_earlier_events():
     assert a == b, "打ち切ると過去の事象が変わっている = 先読み"
 
 
-def test_the_forward_window_starts_after_the_touch_bar():
-    """触れた足そのものを成果に含めると、その足の値動きを二度使うことになる。"""
+def test_the_forward_window_starts_after_the_decision_bar():
+    """判定に使った足を成果に含めると、その足の値動きを二度使うことになる。"""
     candles = generate_synthetic_candles(count=1200, seed=3)
-    events = collect_touches(candles, horizon=1)
+    events = collect_touches(candles, horizon=1, confirm=3)
     assert events
     for e in events[:50]:
-        start = candles[e.bar_index].close
-        nxt = candles[e.bar_index + 1]
+        assert e.bar_index <= e.decision_index < e.bar_index + 3
+        start = candles[e.decision_index].close
+        nxt = candles[e.decision_index + 1]
         sign = -1.0 if e.from_below else 1.0
         expected = (nxt.close - start) * sign / e.atr
         assert e.fade_move == pytest.approx(expected)
+
+
+def test_the_direction_of_approach_uses_the_bar_before_the_touch():
+    """触れた足の終値で決めると、突き抜けた足が「上から来た」判定に化ける。"""
+    candles = generate_synthetic_candles(count=3000, seed=8)
+    events = collect_touches(candles, horizon=6, confirm=3)
+    assert events
+    for e in events[:100]:
+        prior = candles[e.bar_index - 1].close
+        assert e.from_below == (prior < e.zone_price)
+
+
+def test_a_break_and_a_rejection_are_not_pooled_together():
+    """混ぜて平均すると打ち消し合ってきっかり 0 になる(実データでそうなった)。"""
+    from llmfx.research.zone_stats import bucket_by_reaction
+
+    candles = generate_synthetic_candles(count=6000, seed=5)
+    events = collect_touches(candles, horizon=12, confirm=3)
+    labels = {b.label for b in bucket_by_reaction(events)}
+    assert {"弾かれた", "抜けた"} <= labels, labels
+    for b in bucket_by_reaction(events):
+        assert b.count > 0
 
 
 def test_events_are_never_emitted_without_a_full_forward_window():

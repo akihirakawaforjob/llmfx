@@ -168,6 +168,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cooldown", type=int, default=0,
         help="直前の事象からこの本数が経つまで採らない。horizon と同じにすると窓が重ならない",
     )
+    zones.add_argument(
+        "--confirm", type=int, default=3,
+        help="触れてから何本のうちに、弾かれた/抜けたを判定するか",
+    )
     zones.add_argument("--out", default=None, help="事象を JSON へ書き出す(再集計用)")
     zones.add_argument("--split", default="dev", choices=["dev", "holdout", "all"])
     zones.set_defaults(handler=_cmd_zones)
@@ -522,6 +526,7 @@ def _cmd_zones(args: argparse.Namespace) -> int:
     from .backtest.split import split_candles
     from .research.zone_stats import (
         bucket_by_defence,
+        bucket_by_reaction,
         bucket_by_touches,
         collect_touches,
     )
@@ -548,6 +553,7 @@ def _cmd_zones(args: argparse.Namespace) -> int:
             rearm_atr=args.rearm_atr,
             one_per_bar=args.one_per_bar,
             cooldown=args.cooldown,
+            confirm=args.confirm,
         )
         events.extend(found)
         print(f"  {Path(path).stem}: {len(found):,} 件", file=sys.stderr)
@@ -571,7 +577,22 @@ def _cmd_zones(args: argparse.Namespace) -> int:
                   f"{b.break_rate:>8.0%}")
         print()
 
-    show("試された回数で分ける", bucket_by_touches(events))
+    def show_follow(title: str, buckets) -> None:
+        print(title)
+        print(f"{'':<30}{'件数':>7}{'追随の平均':>12}{'中央':>8}{'t':>7}"
+              f"{'最大到達':>10}{'最大逆行':>10}")
+        print("-" * 85)
+        for b in buckets:
+            print(f"{b.label:<30}{b.count:>7}{b.mean_follow:>+12.3f}"
+                  f"{b.median_follow:>+8.3f}{b.follow_tstat():>+7.2f}"
+                  f"{b.median_follow_max:>10.2f}{b.median_follow_adverse:>10.2f}")
+        print()
+
+    show_follow(
+        "帯が何を示したかで分ける(示された向きに付いた場合の成果)",
+        bucket_by_reaction(events),
+    )
+    show("試された回数で分ける(跳ね返り方向を固定した場合)", bucket_by_touches(events))
     show("守り手が持ちこたえているかで分ける", bucket_by_defence(events))
 
     if args.cooldown < args.horizon and not args.one_per_bar:
