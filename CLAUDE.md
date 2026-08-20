@@ -119,7 +119,7 @@ LLM の役割は 3 つだけに限定する:
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q                     # テスト(252 件)
+python -m pytest -q                     # テスト(264 件)
 
 # GMOコインから暗号資産のローソク足を取得(口座・APIキー不要)
 python -m llmfx.cli data fetch-gmo --symbol BTC_JPY --granularity M15 \
@@ -128,6 +128,11 @@ python -m llmfx.cli backtest --config configs/btcjpy_gmo.yaml --data data/btcjpy
 
 # 楽天 MT4 などからエクスポートした CSV を取り込む
 python -m llmfx.cli data import-mt4 --in <MT4のCSV> --out data/usdjpy_m15.csv --server-tz-offset 2
+
+# HistData から FX の足をまとめて作る(口座不要、2000 年以降)
+# 検証に使う 30 銘柄はこれで作る。1 銘柄あたり 4〜5 分
+python -m llmfx.cli data fetch-histdata --symbols USDJPY EURUSD GBPJPY \
+    --granularity H1 --out-dir data --skip-existing
 
 python -m llmfx.cli backtest --config configs/default.yaml --data data/usdjpy_m15.csv --journal data/journal.sqlite
 python -m llmfx.cli diagnose --config configs/default.yaml --data data/usdjpy_m15.csv
@@ -489,6 +494,14 @@ HistData から 8 銘柄・最大 26 年(合計 492 万本)を取得し、開発
   164 が壁だと分かったのが 2024 年の介入後である以上、先読み
 - **データ源による差** — 同じ USD/JPY でも Dukascopy は HistData より
   本数が 44% 多い(週末バーを含む)。データ源を変えたら結果も変わる
+- **`requirements.txt` に実在しない版を書く** — `histdata>=1.4` は PyPI に
+  無く(あるのは 1.0 と 1.1)、`pip install -r requirements.txt` がそこで
+  丸ごと失敗する。環境が作り直されるまで気づかなかった
+- **データ取得を使い捨てのスクリプトに置く** — 環境を作り直すたびに
+  データの作り方ごと消える。`llmfx data fetch-histdata` に移した
+- **1 銘柄の失敗で全体を止める** — 404 の HTML が .zip として届くことがある。
+  30 銘柄を回している最中に 1 つ壊れると、そのプロセスが担当する残りが
+  全部落ちる。1 年分を諦めるだけにすること
 - **壊れた足を掃除しないまま検証する** — HistData の生データには桁の
   飛んだ足が混ざっている。最初は `close` だけを見て弾いていたが足りず、
   **四本値すべてと値幅(1 本で 25% 以上動く足)** まで広げて初めて消えた。

@@ -119,6 +119,24 @@ def _build_parser() -> argparse.ArgumentParser:
     duka.add_argument("--price", default="BID", choices=["BID", "ASK"])
     duka.set_defaults(handler=_cmd_data_fetch_fx)
 
+    hist = data.add_parser(
+        "fetch-histdata",
+        help="HistData から複数銘柄の足をまとめて作る(口座・APIキー不要)",
+    )
+    hist.add_argument(
+        "--symbols", nargs="+", required=True,
+        help="USDJPY EURUSD ... 空白区切りで複数",
+    )
+    hist.add_argument("--granularity", default="H1", help="1 分足を取得してここへ集約する")
+    hist.add_argument("--out-dir", default="data", help="<出力先>/<銘柄>_<足>.csv に書く")
+    hist.add_argument("--from-year", type=int, default=2000)
+    hist.add_argument("--to-year", type=int, default=2026)
+    hist.add_argument(
+        "--skip-existing", action="store_true",
+        help="既に十分な大きさの CSV があれば飛ばす",
+    )
+    hist.set_defaults(handler=_cmd_data_fetch_histdata)
+
     mt4 = data.add_parser(
         "import-mt4", help="MT4 / MT5 の CSV を取り込む(楽天 MT4 など)"
     )
@@ -346,6 +364,85 @@ def _cmd_data_fetch_fx(args: argparse.Namespace) -> int:
         f"-> {args.out}"
     )
     return 0
+
+
+def _cmd_data_fetch_histdata(args: argparse.Namespace) -> int:
+    """HistData から複数銘柄をまとめて取り、指定の足へ集約して書き出す。
+
+    年ごとに掃除して集約し、M1 は捨てる。26 年分の M1 を抱えたままだと
+    1 銘柄で 4.5GB を超え、並列で走らせるとメモリ不足で落ちる。
+    掃除の窓は 200 本なので、前年の末尾だけ持ち越せば境界でも判定は変わらない。
+    """
+    import os
+
+    from .data import histdata_source
+    from .data.resample import resample_candles
+    from .data.sanitize import REFERENCE_WINDOW, drop_bad_bars
+    from .domain.mtf import granularity_minutes
+
+    minutes = granularity_minutes(args.granularity)
+    label = args.granularity.lower()
+    out_dir = Path(args.out_dir)
+    failures = 0
+
+    for symbol in args.symbols:
+        target = out_dir / f"{symbol.lower()}_{label}.csv"
+        if args.skip_existing and target.exists() and target.stat().st_size > 2_000_000:
+            print(f"{symbol}: 既存のため飛ばします", file=sys.stderr)
+            continue
+
+        bars: list = []
+        carry: list = []
+        dropped = 0
+        first_error: str | None = None
+
+        def absorb(m1: list) -> None:
+            nonlocal carry, dropped
+            if not m1:
+                return
+            m1.sort(key=lambda c: c.time)
+            clean, report = drop_bad_bars(carry + m1)
+            dropped += report.dropped
+            fresh = clean[len(carry):]
+            carry = clean[-REFERENCE_WINDOW:]
+            bars.extend(fresh if minutes == 1 else resample_candles(fresh, minutes))
+
+        def take(fetch) -> None:
+            nonlocal first_error
+            try:
+                path = fetch()
+            except Exception as exc:
+                # 何で落ちても、その 1 年分を諦めるだけにする。
+                # 1 銘柄・1 年の失敗で 30 銘柄の取得を止めない。
+                first_error = first_error or f"{type(exc).__name__}: {exc}"
+                return
+            try:
+                absorb(histdata_source.load_zip(path))
+            except Exception as exc:  # 404 の HTML が .zip として届くことがある
+                first_error = first_error or f"{type(exc).__name__}: {exc}"
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+        for year in range(args.from_year, args.to_year):
+            take(lambda y=year: histdata_source.download_year(symbol, y))
+        for month in range(1, 13):
+            take(lambda m=month: histdata_source.download_month(symbol, args.to_year, m))
+
+        if not bars:
+            print(f"{symbol}: 取得できず — {first_error}", file=sys.stderr)
+            failures += 1
+            continue
+        written = save_candles_csv(bars, target)
+        note = f"、除去 {dropped:,} 本" if dropped else ""
+        print(
+            f"{symbol}: {args.granularity} {written:,} 本"
+            f"({bars[0].time:%Y-%m-%d} 〜 {bars[-1].time:%Y-%m-%d} UTC{note}) -> {target}"
+        )
+
+    return 2 if failures == len(args.symbols) else 0
 
 
 def _cmd_data_import_mt4(args: argparse.Namespace) -> int:
