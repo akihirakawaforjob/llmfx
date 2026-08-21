@@ -266,3 +266,49 @@ def test_one_per_bar_is_on_by_default_for_the_two_timeframe_version():
     events = collect_touches_mtf(higher, lower, higher_minutes=60, horizon=24)
     bars = [e.bar_index for e in events]
     assert len(bars) == len(set(bars))
+
+
+# --- 損切りと利確のどちらが先だったか -------------------------------------
+
+
+def test_the_bar_each_threshold_is_first_reached_is_recorded():
+    """最大到達だけでは、損切りと利確のどちらが先か分からない。
+
+    順序を残さずに「両方に触れたら損切り扱い」を適用すると、どの組み合わせも
+    全部負けに見える(実データで実際にそうなった)。
+    """
+    from llmfx.research.zone_stats import THRESHOLDS
+
+    candles = generate_synthetic_candles(count=4000, seed=5)
+    events = collect_touches(candles, horizon=12, confirm=3)
+    assert events
+    for e in events[:200]:
+        assert len(e.first_favourable) == len(THRESHOLDS)
+        assert len(e.first_adverse) == len(THRESHOLDS)
+        for hits in (e.first_favourable, e.first_adverse):
+            reached = [v for v in hits if v >= 0]
+            # 大きいしきい値ほど、届くのは同じか後の足になる
+            assert reached == sorted(reached), hits
+            assert all(0 <= v < 12 for v in reached)
+
+
+def test_a_threshold_the_price_never_reached_is_marked_missing():
+    candles = generate_synthetic_candles(count=4000, seed=5)
+    events = collect_touches(candles, horizon=3, confirm=3)
+    assert events
+    # 3 本で 3.0 ATR まで動く事象はまず無い
+    assert any(e.first_favourable[-1] == -1 for e in events)
+
+
+def test_the_recorded_order_agrees_with_the_maximum_excursions():
+    """しきい値に届いた記録があるなら、最大到達もそれ以上のはず。"""
+    from llmfx.research.zone_stats import THRESHOLDS
+
+    candles = generate_synthetic_candles(count=4000, seed=5)
+    for e in collect_touches(candles, horizon=12, confirm=3)[:200]:
+        for level, bar in zip(THRESHOLDS, e.first_favourable):
+            if bar >= 0:
+                assert e.follow_max >= level - 1e-9
+        for level, bar in zip(THRESHOLDS, e.first_adverse):
+            if bar >= 0:
+                assert e.follow_adverse >= level - 1e-9

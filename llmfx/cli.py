@@ -636,6 +636,8 @@ def _cmd_zones(args: argparse.Namespace) -> int:
                         "fmaxf": round(e.follow_max, 4),
                         "fadv": round(e.follow_adverse, 4),
                         "w": round(e.zone_width_atr, 4),
+                        "up": list(e.first_favourable),
+                        "dn": list(e.first_adverse),
                         "move": round(e.fade_move, 4),
                         "fmax": round(e.fade_max, 4),
                         "bmax": round(e.break_max, 4),

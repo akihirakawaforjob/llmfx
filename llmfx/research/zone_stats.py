@@ -33,6 +33,10 @@ from ..domain.types import Candle, SwingType
 from ..domain.zones import ZoneTracker
 
 
+THRESHOLDS: tuple[float, ...] = (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0)
+"""順序を記録する ATR 倍のしきい値。損切り・利確の候補水準。"""
+
+
 @dataclass
 class TouchEvent:
     """帯に触れた 1 回分の記録."""
@@ -76,6 +80,16 @@ class TouchEvent:
     """同じ向きへの最大到達(ATR 倍)。"""
     follow_adverse: float
     """同じ向きに付いた場合の最大逆行(ATR 倍)。損切り幅の目安。"""
+    first_favourable: tuple[int, ...] = ()
+    """各しきい値へ **最初に届いた** 足(判定足からの本数)。届かなければ -1。
+
+    しきい値は `THRESHOLDS`(ATR 倍)。最大到達だけを見ても、損切りと
+    利確のどちらが先だったかは分からない。順序を残しておかないと、
+    「両方に触れた足は損切り扱い」という決まりが効きすぎて、
+    どんな組み合わせも全部負けに見える(実際そうなった)。
+    """
+    first_adverse: tuple[int, ...] = ()
+    """各しきい値へ最初に逆行した足。届かなければ -1。"""
     zone_width_atr: float = 0.0
     """帯の幅を、測っている足の ATR で割ったもの。
 
@@ -219,6 +233,19 @@ def collect_touches(
             flo = [v * follow_sign for v in lows]
             follow_max = max(max(fhi), max(flo))
             follow_adverse = -min(min(fhi), min(flo))
+
+            # しきい値ごとに「最初に届いた足」を残す。同じ足で両側に
+            # 触れた場合の扱いは、集計側で決められるようにする。
+            first_fav = [-1] * len(THRESHOLDS)
+            first_adv = [-1] * len(THRESHOLDS)
+            for step, (hi_v, lo_v) in enumerate(zip(fhi, flo)):
+                up = max(hi_v, lo_v)
+                dn = -min(hi_v, lo_v)
+                for k, level in enumerate(THRESHOLDS):
+                    if first_fav[k] < 0 and up >= level:
+                        first_fav[k] = step
+                    if first_adv[k] < 0 and dn >= level:
+                        first_adv[k] = step
             found_here.append(
                 TouchEvent(
                     bar_index=i,
@@ -236,6 +263,8 @@ def collect_touches(
                     follow_move=fmoves[-1],
                     follow_max=follow_max,
                     follow_adverse=follow_adverse,
+                    first_favourable=tuple(first_fav),
+                    first_adverse=tuple(first_adv),
                 )
             )
 
