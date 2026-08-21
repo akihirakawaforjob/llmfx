@@ -91,6 +91,7 @@ def collect_fade_trades(
     horizon: int = 24,
     max_zone_width_atr: float | None = None,
     skip_break_risk: bool = False,
+    stop_from_range_bars: int | None = None,
     warmup: int = 200,
     refresh_every: int = 50,
 ) -> list[FadeTrade]:
@@ -111,6 +112,11 @@ def collect_fade_trades(
 
     利用者は「そもそもエントリーしない」と言っていた。指値を動かして
     避けるのではなく、**その帯を丸ごと touch しない** のが本来の形。
+
+    `stop_from_range_bars` は損切りの基準を、帯の縁ではなく **直近 N 本の
+    最値** にする。帯を作ったスイングの縁だけを使うと、少しのはみ出しで
+    刈られる(利用者の指摘)。損切りは広がるが、コストが R に占める比率も
+    下がるので、両方の向きに効く。
     """
     detector = SwingDetector(
         left=left, right=right, atr_period=atr_period, min_swing_atr=min_swing_atr
@@ -172,10 +178,21 @@ def collect_fade_trades(
 
             if from_below:
                 limit = zone.low + entry_offset_atr * a     # 抵抗帯で売る
-                stop = zone.high + stop_buffer_atr * a
+                edge = zone.high
+                if stop_from_range_bars:
+                    # 帯そのものの縁ではなく、もっと広い範囲の最値を使う。
+                    # 帯を作ったスイングの縁だけだと、少しのはみ出しで
+                    # 刈られる。利用者の指摘。
+                    window = candles[max(0, i - stop_from_range_bars) : i + 1]
+                    edge = max(edge, max(c.high for c in window))
+                stop = edge + stop_buffer_atr * a
             else:
                 limit = zone.high - entry_offset_atr * a    # 支持帯で買う
-                stop = zone.low - stop_buffer_atr * a
+                edge = zone.low
+                if stop_from_range_bars:
+                    window = candles[max(0, i - stop_from_range_bars) : i + 1]
+                    edge = min(edge, min(c.low for c in window))
+                stop = edge - stop_buffer_atr * a
             risk = abs(stop - limit)
             if risk <= 0:
                 continue

@@ -200,3 +200,22 @@ def test_break_risk_uses_only_confirmed_swings():
     for a, b in zip(cut, full):
         assert a.bar_index == b.bar_index
         assert a.r_multiple == pytest.approx(b.r_multiple)
+
+
+def test_a_range_based_stop_is_never_tighter_than_the_zone_edge():
+    """はみ出しで刈られないよう、帯の縁より外側にしか動かさない。"""
+    import statistics as st
+
+    edge = trades(horizon=24)
+    wide = trades(horizon=24, stop_from_range_bars=60)
+    assert wide
+    assert (st.median(t.risk_atr for t in wide)
+            >= st.median(t.risk_atr for t in edge))
+
+
+def test_a_longer_window_never_tightens_the_stop():
+    import statistics as st
+
+    short = st.median(t.risk_atr for t in trades(horizon=24, stop_from_range_bars=20))
+    long = st.median(t.risk_atr for t in trades(horizon=24, stop_from_range_bars=120))
+    assert long >= short
