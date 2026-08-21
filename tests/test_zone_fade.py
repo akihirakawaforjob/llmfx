@@ -124,3 +124,79 @@ def test_the_fill_bar_itself_can_stop_the_trade_out():
     """
     got = trades(horizon=24)
     assert any(t.bars_held == 0 for t in got), "約定足での損切りが 1 件も無い"
+
+
+# --- ブレイクリスクで見送る -----------------------------------------------
+
+
+def swing(index, price, kind, lag=3):
+    from datetime import datetime, timedelta, timezone
+
+    from llmfx.domain.types import Swing
+
+    return Swing(index=index, confirmed_index=index + lag,
+                 time=datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(hours=index),
+                 price=price, type=kind)
+
+
+def test_rising_lows_into_a_resistance_zone_mean_the_defenders_are_losing():
+    """安値切り上げ = 買い手が押し上げてきている。抵抗帯は破られやすい。"""
+    from llmfx.domain.types import SwingType
+    from llmfx.research.zone_fade import defenders_weakening
+
+    rising = [swing(10, 99.0, SwingType.LOW), swing(20, 99.6, SwingType.LOW)]
+    falling = [swing(10, 99.6, SwingType.LOW), swing(20, 99.0, SwingType.LOW)]
+    assert defenders_weakening(rising, from_below=True, bar_index=100)
+    assert not defenders_weakening(falling, from_below=True, bar_index=100)
+
+
+def test_the_support_side_is_the_mirror_image():
+    from llmfx.domain.types import SwingType
+    from llmfx.research.zone_fade import defenders_weakening
+
+    falling = [swing(10, 101.0, SwingType.HIGH), swing(20, 100.4, SwingType.HIGH)]
+    rising = [swing(10, 100.4, SwingType.HIGH), swing(20, 101.0, SwingType.HIGH)]
+    assert defenders_weakening(falling, from_below=False, bar_index=100)
+    assert not defenders_weakening(rising, from_below=False, bar_index=100)
+
+
+def test_unconfirmed_swings_are_not_used():
+    """未確定のスイングで判定すると先読みになる。"""
+    from llmfx.domain.types import SwingType
+    from llmfx.research.zone_fade import defenders_weakening
+
+    later = [swing(10, 99.0, SwingType.LOW), swing(20, 99.6, SwingType.LOW)]
+    assert not defenders_weakening(later, from_below=True, bar_index=22)
+    assert defenders_weakening(later, from_below=True, bar_index=23)
+
+
+def test_too_few_swings_means_no_opinion():
+    from llmfx.domain.types import SwingType
+    from llmfx.research.zone_fade import defenders_weakening
+
+    assert not defenders_weakening([], from_below=True, bar_index=100)
+    assert not defenders_weakening(
+        [swing(10, 99.0, SwingType.LOW)], from_below=True, bar_index=100
+    )
+
+
+def test_the_break_risk_filter_changes_which_setups_are_taken():
+    loose = {(t.bar_index, t.entry) for t in trades(horizon=24)}
+    strict = {(t.bar_index, t.entry)
+              for t in trades(horizon=24, skip_break_risk=True)}
+    assert strict and strict != loose
+    # 件数は減るとは限らない。見送ると同時保有 1 建玉の枠が空くため。
+
+
+def test_break_risk_uses_only_confirmed_swings():
+    """未確定のスイングで判定すると先読みになる。"""
+    from llmfx.data.synthetic import generate_synthetic_candles
+    from llmfx.research.zone_fade import collect_fade_trades
+
+    candles = generate_synthetic_candles(count=8000, seed=5)
+    full = collect_fade_trades(candles, horizon=24, skip_break_risk=True)
+    cut = collect_fade_trades(candles[:5000], horizon=24, skip_break_risk=True)
+    assert cut
+    for a, b in zip(cut, full):
+        assert a.bar_index == b.bar_index
+        assert a.r_multiple == pytest.approx(b.r_multiple)

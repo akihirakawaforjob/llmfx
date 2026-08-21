@@ -26,8 +26,30 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..domain.swings import SwingDetector
-from ..domain.types import Candle
+from ..domain.types import Candle, SwingType
 from ..domain.zones import ZoneTracker
+
+
+def defenders_weakening(
+    swings: list, from_below: bool, bar_index: int
+) -> bool:
+    """帯の守り手が押し負け始めているか(利用者の言う「ブレイクリスク」)。
+
+        安値切り上げや高値切り下げが起き始めた抵抗帯はブレイクされやすい。
+        = その帯の守り手が諦め始めている。
+
+    抵抗帯(上から売る側)なら、直近の確定安値が切り上がっていれば
+    買い手が押し上げてきているということ。支持帯ならその鏡像。
+
+    確定済みのスイングだけを見る。未確定を混ぜると先読みになる。
+    判定できるだけの本数が無ければ False(見送らない)。
+    """
+    kind = SwingType.LOW if from_below else SwingType.HIGH
+    pivots = [s for s in swings if s.type is kind and s.confirmed_index <= bar_index]
+    if len(pivots) < 2:
+        return False
+    rising = pivots[-1].price > pivots[-2].price
+    return rising if from_below else not rising
 
 
 @dataclass
@@ -68,6 +90,7 @@ def collect_fade_trades(
     max_wait_bars: int = 12,
     horizon: int = 24,
     max_zone_width_atr: float | None = None,
+    skip_break_risk: bool = False,
     warmup: int = 200,
     refresh_every: int = 50,
 ) -> list[FadeTrade]:
@@ -76,6 +99,18 @@ def collect_fade_trades(
     `entry_offset_atr` は帯の手前側の縁から **帯の内側へ** どれだけ
     入れて指値を置くか。利用者の言う「少し奥」。0 なら縁ちょうど。
     `stop_buffer_atr` は帯の向こう側の縁から外側へどれだけ離すか。
+
+    `skip_break_risk` は利用者の言う「ブレイクリスク」で見送る。
+
+        安値切り上げや高値切り下げが起き始めた抵抗帯はブレイクされやすい。
+        = その帯の守り手が諦め始めている。
+
+    抵抗帯(上から売る)なら、直近の確定安値が切り上がっていたら見送る。
+    買い手が押し上げてきている = 守り手が押し負けつつある。
+    支持帯なら鏡像で、直近の確定高値が切り下がっていたら見送る。
+
+    利用者は「そもそもエントリーしない」と言っていた。指値を動かして
+    避けるのではなく、**その帯を丸ごと touch しない** のが本来の形。
     """
     detector = SwingDetector(
         left=left, right=right, atr_period=atr_period, min_swing_atr=min_swing_atr
@@ -128,6 +163,13 @@ def collect_fade_trades(
                 continue
 
             from_below = candles[i - 1].close < zone.price
+
+            # ブレイクリスク: 守り手が押し負け始めている帯には近づかない。
+            if skip_break_risk and defenders_weakening(
+                detector.swings, from_below, i
+            ):
+                continue
+
             if from_below:
                 limit = zone.low + entry_offset_atr * a     # 抵抗帯で売る
                 stop = zone.high + stop_buffer_atr * a
