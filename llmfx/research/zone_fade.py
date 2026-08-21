@@ -123,6 +123,7 @@ def collect_fade_trades(
     horizon: int = 24,
     max_zone_width_atr: float | None = None,
     skip_break_risk: bool = False,
+    entry_from_range_bars: int | None = None,
     stop_from_range_bars: int | None = None,
     warmup: int = 200,
     refresh_every: int = 50,
@@ -145,10 +146,23 @@ def collect_fade_trades(
     利用者は「そもそもエントリーしない」と言っていた。指値を動かして
     避けるのではなく、**その帯を丸ごと touch しない** のが本来の形。
 
-    `stop_from_range_bars` は損切りの基準を、帯の縁ではなく **直近 N 本の
-    最値** にする。帯を作ったスイングの縁だけを使うと、少しのはみ出しで
-    刈られる(利用者の指摘)。損切りは広がるが、コストが R に占める比率も
-    下がるので、両方の向きに効く。
+    `entry_from_range_bars` は **指値そのもの** を直近 N 本の最値に置く。
+    利用者の本来の指摘はこちら:
+
+        1 つ前の帯の最値ではなく、より広い範囲での最値にすることで、
+        よりはみ出しに刈られにくくなる。
+
+    帯の縁の少し内側で待つと、上へ突き抜ける動きの **途中** で約定して
+    しまい、そのまま損切りまで持っていかれる。直近 N 本の最値まで
+    引き上げると、**そこまで実際に届いたときにしか約定しない**。
+    売るなら天井で売る、という形になる。
+
+    最値は **1 本前まで** で作る。その足自身の高値を使うと、
+    「その足で最値を更新したから、その値で約定した」という循環になる。
+
+    `stop_from_range_bars` は損切りの基準を帯の縁ではなく直近 N 本の
+    最値にする。指値を最値へ置く場合は、損切りはそこから
+    `stop_buffer_atr` だけ外側になるので、リスク幅を直接決められる。
     """
     detector = SwingDetector(
         left=left, right=right, atr_period=atr_period, min_swing_atr=min_swing_atr
@@ -158,6 +172,7 @@ def collect_fade_trades(
     # 直近 N 本の最値は、帯に触れるたびに窓を舐め直すと重い。
     # 実測では 48 通りの掃引が 1 銘柄 1 時間を超えた。O(n) で先に作る。
     roll_high, roll_low = _rolling_extremes(candles, stop_from_range_bars)
+    entry_high, entry_low = _rolling_extremes(candles, entry_from_range_bars)
 
     atr_at: list[float] = []
     seen_swings = 0
@@ -213,8 +228,12 @@ def collect_fade_trades(
                 continue
 
             if from_below:
-                limit = zone.low + entry_offset_atr * a     # 抵抗帯で売る
-                edge = zone.high
+                if entry_high is not None:
+                    # 天井で売る。最値は 1 本前まで(循環を避ける)。
+                    limit = max(zone.high, entry_high[i - 1])
+                else:
+                    limit = zone.low + entry_offset_atr * a
+                edge = max(zone.high, limit)
                 if roll_high is not None:
                     # 帯そのものの縁ではなく、もっと広い範囲の最値を使う。
                     # 帯を作ったスイングの縁だけだと、少しのはみ出しで
@@ -222,8 +241,11 @@ def collect_fade_trades(
                     edge = max(edge, roll_high[i])
                 stop = edge + stop_buffer_atr * a
             else:
-                limit = zone.high - entry_offset_atr * a    # 支持帯で買う
-                edge = zone.low
+                if entry_low is not None:
+                    limit = min(zone.low, entry_low[i - 1])
+                else:
+                    limit = zone.high - entry_offset_atr * a
+                edge = min(zone.low, limit)
                 if roll_low is not None:
                     edge = min(edge, roll_low[i])
                 stop = edge - stop_buffer_atr * a

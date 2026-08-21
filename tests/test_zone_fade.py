@@ -219,3 +219,39 @@ def test_a_longer_window_never_tightens_the_stop():
     short = st.median(t.risk_atr for t in trades(horizon=24, stop_from_range_bars=20))
     long = st.median(t.risk_atr for t in trades(horizon=24, stop_from_range_bars=120))
     assert long >= short
+
+
+# --- 指値を最値へ置く -----------------------------------------------------
+
+
+def test_the_entry_limit_can_sit_at_the_range_extreme():
+    """帯の縁の内側ではなく、直近 N 本の最値で待つ(利用者の本来の指摘)。
+
+    縁の内側で待つと、上へ突き抜ける動きの途中で約定してしまい、
+    そのまま損切りまで持っていかれる。
+    """
+    inside = trades(horizon=24, stop_buffer_atr=0.5)
+    extreme = trades(horizon=24, stop_buffer_atr=0.5, entry_from_range_bars=20)
+    assert extreme
+    import statistics as st
+    # 最値で待つほうが、指値は必ず帯の外側寄りになる
+    assert (st.median(t.entry for t in extreme if t.from_below)
+            >= st.median(t.entry for t in inside if t.from_below))
+
+
+def test_the_extreme_excludes_the_bar_that_would_fill_it():
+    """その足の高値で指値を決めると「更新したから約定した」の循環になる。
+
+    循環していれば、触れた足で必ず約定するので待ち時間が効かなくなる。
+    """
+    brief = len(trades(horizon=24, entry_from_range_bars=60, max_wait_bars=1))
+    patient = len(trades(horizon=24, entry_from_range_bars=60, max_wait_bars=30))
+    assert brief < patient * 0.9, (brief, patient)
+
+
+def test_the_stop_stays_outside_the_entry_extreme():
+    for t in trades(horizon=24, entry_from_range_bars=20, stop_buffer_atr=0.5)[:200]:
+        if t.from_below:
+            assert t.stop > t.entry
+        else:
+            assert t.stop < t.entry
