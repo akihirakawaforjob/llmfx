@@ -52,6 +52,38 @@ def defenders_weakening(
     return rising if from_below else not rising
 
 
+def _rolling_extremes(
+    candles: list[Candle], window: int | None
+) -> tuple[list[float] | None, list[float] | None]:
+    """直近 `window` 本の高値の最大・安値の最小を、各足について先に作る。
+
+    単調デックで O(n)。窓を毎回舐めると O(n x window) になり、
+    掃引が実用にならない(48 通りで 1 銘柄 1 時間を超えた)。
+    """
+    if not window:
+        return None, None
+    from collections import deque
+
+    highs: list[float] = []
+    lows: list[float] = []
+    hi_q: deque[int] = deque()
+    lo_q: deque[int] = deque()
+    for i, c in enumerate(candles):
+        while hi_q and candles[hi_q[-1]].high <= c.high:
+            hi_q.pop()
+        hi_q.append(i)
+        while lo_q and candles[lo_q[-1]].low >= c.low:
+            lo_q.pop()
+        lo_q.append(i)
+        if hi_q[0] <= i - window:
+            hi_q.popleft()
+        if lo_q[0] <= i - window:
+            lo_q.popleft()
+        highs.append(candles[hi_q[0]].high)
+        lows.append(candles[lo_q[0]].low)
+    return highs, lows
+
+
 @dataclass
 class FadeTrade:
     """帯へ置いた指値が約定してからの成果."""
@@ -123,6 +155,10 @@ def collect_fade_trades(
     )
     tracker = ZoneTracker(tolerance_atr=tolerance_atr, max_age_bars=max_age_bars)
 
+    # 直近 N 本の最値は、帯に触れるたびに窓を舐め直すと重い。
+    # 実測では 48 通りの掃引が 1 銘柄 1 時間を超えた。O(n) で先に作る。
+    roll_high, roll_low = _rolling_extremes(candles, stop_from_range_bars)
+
     atr_at: list[float] = []
     seen_swings = 0
     trades: list[FadeTrade] = []
@@ -179,19 +215,17 @@ def collect_fade_trades(
             if from_below:
                 limit = zone.low + entry_offset_atr * a     # 抵抗帯で売る
                 edge = zone.high
-                if stop_from_range_bars:
+                if roll_high is not None:
                     # 帯そのものの縁ではなく、もっと広い範囲の最値を使う。
                     # 帯を作ったスイングの縁だけだと、少しのはみ出しで
                     # 刈られる。利用者の指摘。
-                    window = candles[max(0, i - stop_from_range_bars) : i + 1]
-                    edge = max(edge, max(c.high for c in window))
+                    edge = max(edge, roll_high[i])
                 stop = edge + stop_buffer_atr * a
             else:
                 limit = zone.high - entry_offset_atr * a    # 支持帯で買う
                 edge = zone.low
-                if stop_from_range_bars:
-                    window = candles[max(0, i - stop_from_range_bars) : i + 1]
-                    edge = min(edge, min(c.low for c in window))
+                if roll_low is not None:
+                    edge = min(edge, roll_low[i])
                 stop = edge - stop_buffer_atr * a
             risk = abs(stop - limit)
             if risk <= 0:
