@@ -312,3 +312,28 @@ def test_the_recorded_order_agrees_with_the_maximum_excursions():
         for level, bar in zip(THRESHOLDS, e.first_adverse):
             if bar >= 0:
                 assert e.follow_adverse >= level - 1e-9
+
+
+def test_both_collectors_record_the_same_fields():
+    """単一足版と上位足版で、記録の中身が食い違っていないこと。
+
+    二重に書いていたせいで、しきい値の順序が片方にしか入っておらず、
+    2 時間半かけた観測を捨てることになった。同じ組み立てを通す。
+    """
+    from dataclasses import fields
+
+    from llmfx.data.resample import resample_candles
+    from llmfx.research.zone_stats import collect_touches_mtf
+
+    lower = generate_synthetic_candles(count=8000, seed=4)
+    higher = resample_candles(lower, 60)
+
+    single = collect_touches(lower, horizon=12, confirm=3, one_per_bar=True)
+    mtf = collect_touches_mtf(higher, lower, higher_minutes=60,
+                              horizon=12, confirm=3, one_per_bar=True)
+    assert single and mtf
+
+    for name in [f.name for f in fields(single[0])]:
+        got_single = any(getattr(e, name) not in ((), None) for e in single[:500])
+        got_mtf = any(getattr(e, name) not in ((), None) for e in mtf[:500])
+        assert got_single == got_mtf, f"{name} が片方だけ埋まっていない"

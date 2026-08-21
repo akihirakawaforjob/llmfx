@@ -111,6 +111,104 @@ def _atr_series(candles: list[Candle], period: int) -> list[float]:
     return out
 
 
+def _build_event(
+    series: list[Candle],
+    i: int,
+    zone: Zone,
+    atr: float,
+    horizon: int,
+    confirm: int,
+) -> TouchEvent | None:
+    """帯へ触れた 1 件を、成果まで含めて組み立てる。
+
+    単一足版と上位足版で **必ず同じ処理を通す** ためにここへ出した。
+    二重に書いていたせいで、しきい値の順序を片方にだけ足してしまい、
+    2 時間半かけた観測を丸ごと捨てることになった。約定ロジックを
+    二重に書かないのと同じ理由で、観測の処理も一本化する。
+    """
+    # どちら側から来たかは **触れる前** の位置で決める。触れた足の終値で
+    # 決めると、突き抜けて上で引けた足が「上から来た」判定になり、
+    # 突破が「弾かれた」に化ける(実際に化けていた)。
+    from_below = series[i - 1].close < zone.price
+
+    # 帯に来た時点では方向を決めない。`confirm` 本のうちにどちらへ
+    # 引けたかで決める。1 本で判定すると突破がほとんど拾えない
+    # (合成データで 851 件中 2 件しか出なかった)。
+    decision = None
+    reaction = "中"
+    for j in range(i, min(i + confirm, len(series))):
+        c = series[j]
+        if from_below:
+            if c.close > zone.high:
+                decision, reaction = j, "抜けた"
+                break
+            if c.close < zone.low:
+                decision, reaction = j, "弾かれた"
+                break
+        else:
+            if c.close < zone.low:
+                decision, reaction = j, "抜けた"
+                break
+            if c.close > zone.high:
+                decision, reaction = j, "弾かれた"
+                break
+    if decision is None:
+        decision, reaction = min(i + confirm - 1, len(series) - 1), "中"
+
+    forward = series[decision + 1 : decision + 1 + horizon]
+    if len(forward) < horizon:
+        return None
+
+    start = series[decision].close
+    sign = -1.0 if from_below else 1.0
+    moves = [(c.close - start) * sign / atr for c in forward]
+    highs = [(c.high - start) * sign / atr for c in forward]
+    lows = [(c.low - start) * sign / atr for c in forward]
+    broke = any(
+        c.close > zone.high if from_below else c.close < zone.low for c in forward
+    )
+
+    # 示された向きへ付いた場合の成果。「中」は跳ね返り側を仮置き。
+    follow_sign = -1.0 if reaction == "抜けた" else 1.0
+    fhi = [v * follow_sign for v in highs]
+    flo = [v * follow_sign for v in lows]
+
+    # しきい値ごとに「最初に届いた足」を残す。最大到達だけでは損切りと
+    # 利確のどちらが先か分からず、「両方に触れたら損切り」の決まりが
+    # 効きすぎて、どの組み合わせも全部負けに見える。
+    first_fav = [-1] * len(THRESHOLDS)
+    first_adv = [-1] * len(THRESHOLDS)
+    for step, (hi_v, lo_v) in enumerate(zip(fhi, flo)):
+        up = max(hi_v, lo_v)
+        dn = -min(hi_v, lo_v)
+        for k, level in enumerate(THRESHOLDS):
+            if first_fav[k] < 0 and up >= level:
+                first_fav[k] = step
+            if first_adv[k] < 0 and dn >= level:
+                first_adv[k] = step
+
+    return TouchEvent(
+        bar_index=i,
+        decision_index=decision,
+        zone_price=zone.price,
+        touches=zone.count,
+        defence=zone.defence,
+        from_below=from_below,
+        atr=atr,
+        fade_move=moves[-1],
+        fade_max=max(max(highs), max(lows)),
+        break_max=-min(min(highs), min(lows)),
+        broke=broke,
+        reaction=reaction,
+        follow_move=moves[-1] * follow_sign,
+        follow_max=max(max(fhi), max(flo)),
+        follow_adverse=-min(min(fhi), min(flo)),
+        first_favourable=tuple(first_fav),
+        first_adverse=tuple(first_adv),
+        zone_width_atr=zone.width / atr,
+    )
+
+
 def collect_touches(
     candles: list[Candle],
     *,
@@ -185,88 +283,10 @@ def collect_touches(
             # どちら側から来たかは **触れる前** の位置で決める。触れた足の
             # 終値で決めると、突き抜けて上で引けた足が「上から来た」判定に
             # なり、突破が「弾かれた」に化ける(実際に化けていた)。
-            from_below = candles[i - 1].close < zone.price
-
-            # 帯に来た時点では方向を決めない。`confirm` 本のうちに
-            # どちらへ引けたかで決める。1 本で判定すると、突破が
-            # ほとんど拾えない(合成データで 851 件中 2 件しか出なかった)。
-            decision = None
-            for j in range(i, min(i + confirm, len(candles))):
-                c = candles[j]
-                if from_below:
-                    if c.close > zone.high:
-                        decision, reaction = j, "抜けた"
-                        break
-                    if c.close < zone.low:
-                        decision, reaction = j, "弾かれた"
-                        break
-                else:
-                    if c.close < zone.low:
-                        decision, reaction = j, "抜けた"
-                        break
-                    if c.close > zone.high:
-                        decision, reaction = j, "弾かれた"
-                        break
-            if decision is None:
-                decision, reaction = min(i + confirm - 1, len(candles) - 1), "中"
-
-            forward = candles[decision + 1 : decision + 1 + horizon]
-            if len(forward) < horizon:
+            event = _build_event(candles, i, zone, a, horizon, confirm)
+            if event is None:
                 continue
-            start = candles[decision].close
-            # 跳ね返り方向 = 帯へ来た向きの逆
-            sign = -1.0 if from_below else 1.0
-            moves = [(c.close - start) * sign / a for c in forward]
-            highs = [(c.high - start) * sign / a for c in forward]
-            lows = [(c.low - start) * sign / a for c in forward]
-            fade_max = max(max(highs), max(lows))
-            break_max = -min(min(highs), min(lows))
-            broke = any(
-                c.close > zone.high if from_below else c.close < zone.low
-                for c in forward
-            )
-
-            # 示された向きへ付いた場合の成果。「中」は跳ね返り側を仮置き。
-            follow_sign = -1.0 if reaction == "抜けた" else 1.0
-            fmoves = [v * follow_sign for v in moves]
-            fhi = [v * follow_sign for v in highs]
-            flo = [v * follow_sign for v in lows]
-            follow_max = max(max(fhi), max(flo))
-            follow_adverse = -min(min(fhi), min(flo))
-
-            # しきい値ごとに「最初に届いた足」を残す。同じ足で両側に
-            # 触れた場合の扱いは、集計側で決められるようにする。
-            first_fav = [-1] * len(THRESHOLDS)
-            first_adv = [-1] * len(THRESHOLDS)
-            for step, (hi_v, lo_v) in enumerate(zip(fhi, flo)):
-                up = max(hi_v, lo_v)
-                dn = -min(hi_v, lo_v)
-                for k, level in enumerate(THRESHOLDS):
-                    if first_fav[k] < 0 and up >= level:
-                        first_fav[k] = step
-                    if first_adv[k] < 0 and dn >= level:
-                        first_adv[k] = step
-            found_here.append(
-                TouchEvent(
-                    bar_index=i,
-                    decision_index=decision,
-                    zone_price=zone.price,
-                    touches=zone.count,
-                    defence=zone.defence,
-                    from_below=from_below,
-                    atr=a,
-                    fade_move=moves[-1],
-                    fade_max=fade_max,
-                    break_max=break_max,
-                    broke=broke,
-                    reaction=reaction,
-                    follow_move=fmoves[-1],
-                    follow_max=follow_max,
-                    follow_adverse=follow_adverse,
-                    first_favourable=tuple(first_fav),
-                    first_adverse=tuple(first_adv),
-                )
-            )
+            found_here.append(event)
 
         if not found_here:
             continue
@@ -359,64 +379,10 @@ def collect_touches_mtf(
             if cooling:
                 continue
 
-            from_below = lower[i - 1].close < zone.price
-            decision = None
-            for j in range(i, min(i + confirm, len(lower))):
-                c = lower[j]
-                if from_below:
-                    if c.close > zone.high:
-                        decision, reaction = j, "抜けた"
-                        break
-                    if c.close < zone.low:
-                        decision, reaction = j, "弾かれた"
-                        break
-                else:
-                    if c.close < zone.low:
-                        decision, reaction = j, "抜けた"
-                        break
-                    if c.close > zone.high:
-                        decision, reaction = j, "弾かれた"
-                        break
-            if decision is None:
-                decision, reaction = min(i + confirm - 1, len(lower) - 1), "中"
-
-            forward = lower[decision + 1 : decision + 1 + horizon]
-            if len(forward) < horizon:
+            event = _build_event(lower, i, zone, a, horizon, confirm)
+            if event is None:
                 continue
-            start = lower[decision].close
-            sign = -1.0 if from_below else 1.0
-            moves = [(c.close - start) * sign / a for c in forward]
-            highs = [(c.high - start) * sign / a for c in forward]
-            lows = [(c.low - start) * sign / a for c in forward]
-            fade_max = max(max(highs), max(lows))
-            break_max = -min(min(highs), min(lows))
-            broke = any(
-                c.close > zone.high if from_below else c.close < zone.low
-                for c in forward
-            )
-            follow_sign = -1.0 if reaction == "抜けた" else 1.0
-            fhi = [v * follow_sign for v in highs]
-            flo = [v * follow_sign for v in lows]
-            found_here.append(
-                TouchEvent(
-                    bar_index=i,
-                    decision_index=decision,
-                    zone_price=zone.price,
-                    touches=zone.count,
-                    defence=zone.defence,
-                    from_below=from_below,
-                    atr=a,
-                    fade_move=moves[-1],
-                    fade_max=fade_max,
-                    break_max=break_max,
-                    broke=broke,
-                    reaction=reaction,
-                    follow_move=moves[-1] * follow_sign,
-                    follow_max=max(max(fhi), max(flo)),
-                    follow_adverse=-min(min(fhi), min(flo)),
-                    zone_width_atr=zone.width / a,
-                )
-            )
+            found_here.append(event)
 
         if not found_here:
             continue
