@@ -151,15 +151,18 @@ def collect_fade_trades(
 
             armed[key] = False
             sign = -1.0 if from_below else 1.0
-            forward = candles[fill_at + 1 : fill_at + 1 + horizon]
-            if len(forward) < horizon:
+            # **約定した足そのものから見る。**その足の残りで損切りまで
+            # 走ることは普通にある。翌足から数えると、いちばん不利な
+            # 場面だけを見逃して成績が良く出る。
+            forward = candles[fill_at : fill_at + 1 + horizon]
+            if len(forward) < horizon + 1:
                 continue
 
             best = worst = 0.0
             hit_stop = False
             held = horizon
             result = 0.0
-            for step, c in enumerate(forward, start=1):
+            for step, c in enumerate(forward):
                 fav = max((c.high - limit) * sign, (c.low - limit) * sign)
                 adv = -min((c.high - limit) * sign, (c.low - limit) * sign)
                 best = max(best, fav)

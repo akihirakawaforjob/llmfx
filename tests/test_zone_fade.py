@@ -107,9 +107,20 @@ def test_truncating_the_series_does_not_change_earlier_trades():
         assert a.r_multiple == pytest.approx(b.r_multiple)
 
 
-def test_narrow_zone_filter_only_removes_trades():
-    loose = trades(horizon=24)
+def test_narrow_zone_filter_keeps_only_narrow_zones():
+    """件数は減るとは限らない。太い帯を見送ると、同時保有 1 建玉の枠が
+    空いて別の機会を拾えるため。守るべきは幅の条件そのもの。"""
     strict = trades(horizon=24, max_zone_width_atr=1.5)
-    assert len(strict) <= len(loose)
+    assert strict
     for t in strict:
         assert t.zone_width_atr <= 1.5
+
+
+def test_the_fill_bar_itself_can_stop_the_trade_out():
+    """約定した足の残りで損切りまで走ることは普通にある。
+
+    翌足から数えると、いちばん不利な場面だけを見逃して成績が良く出る。
+    実測では、ここを直すだけで差引が +0.118 R から動いた。
+    """
+    got = trades(horizon=24)
+    assert any(t.bars_held == 0 for t in got), "約定足での損切りが 1 件も無い"
