@@ -69,6 +69,7 @@ def collect_fade_trades(
     horizon: int = 24,
     max_zone_width_atr: float | None = None,
     warmup: int = 200,
+    refresh_every: int = 50,
 ) -> list[FadeTrade]:
     """帯へ指値を置き、約定した取引だけを集める。
 
@@ -86,6 +87,9 @@ def collect_fade_trades(
     trades: list[FadeTrade] = []
     armed: dict[int, bool] = {}
     busy_until = -1
+    cached: list = []
+    cached_swings = -1
+    cached_at = -10**9
 
     for i, candle in enumerate(candles):
         detector.update(candle)
@@ -100,7 +104,15 @@ def collect_fade_trades(
         if i <= busy_until:
             continue
 
-        for zone in tracker.zones(bar_index=i, min_touches=min_touches):
+        # 有効な帯の一覧を毎足作り直すと、蓄積した帯の数に比例して重くなる
+        # (600,000 足 x 数千の帯)。スイングが増えたときと、古い帯が落ちる
+        # 頃合いだけ作り直す。**新しい帯の反映が遅れる方向にしかずれない**
+        # ので、先読みにはならない。
+        if seen_swings != cached_swings or i - cached_at >= refresh_every:
+            cached = tracker.zones(bar_index=i, min_touches=min_touches)
+            cached_swings, cached_at = seen_swings, i
+
+        for zone in cached:
             width = zone.width / a
             if max_zone_width_atr is not None and width > max_zone_width_atr:
                 continue

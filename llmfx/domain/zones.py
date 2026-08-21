@@ -37,6 +37,14 @@ class Zone:
     low: float
     high: float
     touches: list[Swing] = field(default_factory=list)
+    _sum_price: float = 0.0
+    _max_confirmed: int = -1
+    _min_index: int = 0
+    _max_index: int = -1
+    """代表値・最終確定足などを毎回まとめ直すと、帯の接触数に比例して
+    重くなる。実測では 47.5 万足の観測でここが全体の半分を食っていた
+    (`price` が 160 万回呼ばれ、そのたびに数百件を舐めていた)。
+    接触を足すときに更新して、参照は一定時間で済ませる。"""
     penetrations: list[float] = field(default_factory=list)
     """毎回の接触が、それまでの水準をどれだけ超えたか(ATR 倍)。
 
@@ -49,10 +57,21 @@ class Zone:
     最初の接触には比較対象が無いので記録しない(要素数は count - 1)。
     """
 
+    def add_touch(self, swing: Swing) -> None:
+        """接触を 1 つ足し、まとめ直しに使う値も同時に更新する。"""
+        self.touches.append(swing)
+        self._sum_price += swing.price
+        self._max_confirmed = max(self._max_confirmed, swing.confirmed_index)
+        if self._max_index < 0:
+            self._min_index = swing.index
+        else:
+            self._min_index = min(self._min_index, swing.index)
+        self._max_index = max(self._max_index, swing.index)
+
     @property
     def price(self) -> float:
         """帯の代表値。触れられた点の平均。"""
-        return sum(s.price for s in self.touches) / len(self.touches)
+        return self._sum_price / len(self.touches)
 
     @property
     def count(self) -> int:
@@ -64,15 +83,15 @@ class Zone:
 
     @property
     def first_index(self) -> int:
-        return min(s.index for s in self.touches)
+        return self._min_index
 
     @property
     def last_index(self) -> int:
-        return max(s.index for s in self.touches)
+        return self._max_index
 
     @property
     def last_confirmed_index(self) -> int:
-        return max(s.confirmed_index for s in self.touches)
+        return self._max_confirmed
 
     @property
     def sides(self) -> set[SwingType]:
@@ -154,7 +173,7 @@ class ZoneTracker:
                     else level - swing.price
                 )
                 zone.penetrations.append(depth / atr)
-                zone.touches.append(swing)
+                zone.add_touch(swing)
                 zone.low = min(zone.low, swing.price - tolerance / 2)
                 zone.high = max(zone.high, swing.price + tolerance / 2)
                 return zone
@@ -162,8 +181,8 @@ class ZoneTracker:
         zone = Zone(
             low=swing.price - tolerance / 2,
             high=swing.price + tolerance / 2,
-            touches=[swing],
         )
+        zone.add_touch(swing)
         self._zones.append(zone)
         return zone
 
