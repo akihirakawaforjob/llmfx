@@ -307,3 +307,48 @@ def test_the_two_modes_stay_switchable():
     ):
         got = trades(horizon=24, **kwargs)
         assert got, kwargs
+
+
+# --- 反対側の帯で決済する(往復を刈る)------------------------------------
+
+
+def test_exiting_at_the_opposite_zone_frees_the_slot_for_the_return_leg():
+    """反対側で切れば建玉が早く空き、そこから逆向きに入れる。
+
+    利用者の指摘: 区画に帯が二つあれば自ずとレンジになるので、
+    両端から入れる仕組みが要る。
+    """
+    plain = trades(horizon=24)
+    both = trades(horizon=24, exit_at_opposite_zone=True)
+    assert both
+    assert len(both) > len(plain), (len(plain), len(both))
+
+
+def test_exiting_at_the_opposite_zone_raises_the_win_rate():
+    plain = [t.r_multiple for t in trades(horizon=24)]
+    both = [t.r_multiple for t in trades(horizon=24, exit_at_opposite_zone=True)]
+    assert sum(1 for r in both if r > 0) / len(both) > \
+        sum(1 for r in plain if r > 0) / len(plain)
+
+
+def test_a_trade_closed_at_the_opposite_zone_is_not_a_full_stop_loss():
+    """反対側での決済は損切りではない。-1.0R に潰してはいけない。"""
+    both = trades(horizon=24, exit_at_opposite_zone=True)
+    closed = [t for t in both if not t.hit_stop and t.bars_held < 24]
+    assert closed, "反対側で決済した取引が 1 件も無い"
+    assert any(t.r_multiple > 0 for t in closed)
+
+
+def test_every_mechanism_can_be_switched_independently():
+    """組み合わせを捨てていくために、機構は独立に入り切りできること。"""
+    for kwargs in (
+        {},
+        {"higher_minutes": 60},
+        {"require_range": True},
+        {"exit_at_opposite_zone": True},
+        {"skip_break_risk": True},
+        {"higher_minutes": 60, "exit_at_opposite_zone": True},
+        {"higher_minutes": 60, "require_range": True, "exit_at_opposite_zone": True},
+    ):
+        got = trades(horizon=24, **kwargs)
+        assert got, kwargs

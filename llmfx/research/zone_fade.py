@@ -141,6 +141,7 @@ def collect_fade_trades(
     higher_minutes: int | None = None,
     require_range: bool = False,
     max_range_atr: float | None = None,
+    exit_at_opposite_zone: bool = False,
     skip_break_risk: bool = False,
     entry_from_range_bars: int | None = None,
     stop_from_range_bars: int | None = None,
@@ -187,7 +188,23 @@ def collect_fade_trades(
     「エントリーに使う時間軸の 2 つ上位」(M15 なら H1)。閉じた上位足
     しか使わないので先読みにならない。
 
+    `exit_at_opposite_zone` は、**反対側の帯へ届いたらそこで手仕舞う**。
+    利用者の説明:
+
+        もしその区画に抵抗帯が二つあれば、自ずとそれらはレンジになる。
+        その為、両端からエントリーする必要がある。
+
+    帯 1 本での逆張りは、反対側まで走っても時間切れまで持ち続ける。
+    反対側で切れば、そこは同時に **反対向きのエントリー地点** でもあるので、
+    往復を刈れるようになる(手仕舞い後は待機が解けるため、同じ足で
+    反対側の帯に指値を置ける)。
+
+    注意: 反対側で切ると、**そのまま抜けて走る場合の裾も切る**。
+    利用者は「反対側を抜けてそのまま走ったら全部が取り分」と言っている
+    ので、ここは掃引して確かめる軸であって、既定では入れない。
+
     `require_range` は **上下 2 本の帯が揃っているときだけ**建玉を持つ。
+    こちらは能力ではなく絞り込み。既定では掛けない。
     利用者の説明:
 
         抵抗帯を 2 つ探し、そこをレンジとしてその間の往復を刈り取る。
@@ -337,6 +354,16 @@ def collect_fade_trades(
                 continue
 
             armed[key] = False
+
+            # 反対側(利益方向)の帯。往復を刈るときの手仕舞い先。
+            opposite = None
+            if exit_at_opposite_zone:
+                other = [z for z in cached if z is not zone
+                         and (z.price < limit if from_below else z.price > limit)]
+                if other:
+                    opposite = (max(other, key=lambda z: z.price) if from_below
+                                else min(other, key=lambda z: z.price))
+
             sign = -1.0 if from_below else 1.0
             # **約定した足そのものから見る。**その足の残りで損切りまで
             # 走ることは普通にある。翌足から数えると、いちばん不利な
@@ -362,6 +389,14 @@ def collect_fade_trades(
                     held = step
                     result = -1.0
                     break
+                if opposite is not None:
+                    # 反対側の帯の **手前の縁** で手仕舞う。
+                    edge = opposite.high if from_below else opposite.low
+                    reached = (c.low <= edge) if from_below else (c.high >= edge)
+                    if reached:
+                        held = step
+                        result = (edge - limit) * sign / risk
+                        break
             if not hit_stop:
                 result = (forward[-1].close - limit) * sign / risk
 
@@ -383,7 +418,7 @@ def collect_fade_trades(
                     bars_held=held,
                 )
             )
-            busy_until = fill_at + held   # 同時に 1 建玉だけ
+            busy_until = fill_at + held   # 同時に 1 建玉。決済したら次を張れる
             break
 
     return trades
