@@ -274,6 +274,7 @@ def collect_fade_trades(
     edge_mode: str = "fade",
     break_confirm: str = "touch",
     break_confirm_atr: float = 0.0,
+    max_open: int = 1,
     entry_beyond_atr: float = 0.0,
     warmup: int = 200,
     refresh_every: int = 50,
@@ -355,6 +356,22 @@ def collect_fade_trades(
     | `fade` | いつも跳ね返り側(帯で逆張り) |
     | `break` | いつも抜けた側(帯の外へ乗る) |
     | `auto` | **守り手が押し負けていれば抜けた側、そうでなければ跳ね返り側** |
+    | `weakening` | **押し負けが起きた時点で乗る。**帯に届くのを待たない |
+
+    `weakening` は利用者の言う「抵抗帯の押し負けが発生した時点で乗る」。
+    帯へ向かう安値が切り上がった瞬間(確定スイングで判定)に、次の足の
+    始値で建玉を持つ。**帯まで届く前に入るので、端で反転する形を待たない。**
+    損切りはその **切り上がった安値の下**(構造)に置く。利確は置かず、
+    時間切れまで持つ。
+
+    `max_open` は同時に持てる建玉の数。利用者の指摘:
+
+        レンジの往復を取る時に建玉があると指値を入れられない
+        = 機会損失となりうる。
+
+    1 建玉に縛ると、ある機会を取ったせいで別の機会を丸ごと落とす。
+    **ただし R は 1 建玉あたりの値なので、同時に持つほど口座の変動は
+    大きくなる。**資金管理は別に決める必要がある。
 
     `auto` の判定は `defenders_weakening`(抵抗帯へ向かう安値が切り上がって
     いるか)。利用者の指摘:
@@ -503,8 +520,10 @@ def collect_fade_trades(
     entry_high, entry_low = _rolling_extremes(candles, entry_from_range_bars)
     if zone_source not in ("pivots", "range"):
         raise ValueError(f"zone_source が不正: {zone_source!r}")
-    if edge_mode not in ("fade", "break", "auto"):
+    if edge_mode not in ("fade", "break", "auto", "weakening"):
         raise ValueError(f"edge_mode が不正: {edge_mode!r}")
+    if max_open < 1:
+        raise ValueError("max_open は 1 以上")
     if break_confirm not in ("touch", "close"):
         raise ValueError(f"break_confirm が不正: {break_confirm!r}")
     if zone_source == "range" and not range_needs_turn:
@@ -518,6 +537,28 @@ def collect_fade_trades(
 
     turn_hi: _deque = _deque()
     turn_lo: _deque = _deque()
+
+    # 直近 2 本の確定スイング。押し負け(安値切り上げ / 高値切り下げ)の
+    # 判定と、そこに置く損切りに要る。**列を毎回舐めると重い。**
+    swing_state = {"prev_low": None, "last_low": None,
+                   "prev_high": None, "last_high": None, "seen": 0}
+
+    def note_swings() -> None:
+        sw = detector.swings
+        st = swing_state
+        for x in sw[st["seen"]:]:
+            if x.type is SwingType.LOW:
+                st["prev_low"], st["last_low"] = st["last_low"], x.price
+            else:
+                st["prev_high"], st["last_high"] = st["last_high"], x.price
+        st["seen"] = len(sw)
+        if sw:
+            # 末尾は「より極端な方」に置き換わることがある。値だけ更新する。
+            t = sw[-1]
+            if t.type is SwingType.LOW:
+                st["last_low"] = t.price
+            else:
+                st["last_high"] = t.price
 
     def absorb_turn(sw) -> None:
         if sw.type is SwingType.HIGH:
@@ -569,10 +610,112 @@ def collect_fade_trades(
     seen_swings = 0
     trades: list[FadeTrade] = []
     armed: dict[int, bool] = {}
-    busy_until = -1
+    open_until: list[int] = []   # 建玉が空くまでの足番号。max_open まで持てる
+    was_rising = was_falling = False
     cached: list = []
     cached_swings = -1
     cached_at = -10**9
+
+    def _run_position(*, i, fill_at, limit, stop, risk, long_side, from_below,
+                      opposite, zone, width, a, weakening):
+        """約定してから決済までを回して 1 件にまとめる。
+
+        **入り口が何であれ、ここを通す。**帯の端で待つ形と、押し負けで
+        乗る形の 2 つがあるが、約定と決済の判定を 2 か所に書くと、
+        片方だけ直したときに挙動がずれる(過去に踏んでいる)。
+        """
+        sign = 1.0 if long_side else -1.0
+        # **約定した足そのものから見る。**その足の残りで損切りまで
+        # 走ることは普通にある。翌足から数えると、いちばん不利な
+        # 場面だけを見逃して成績が良く出る。
+        forward = candles[fill_at : fill_at + 1 + horizon]
+        if len(forward) < horizon + 1:
+            return None
+
+        best = worst = 0.0
+        why, exit_price = "time", 0.0
+        hit_stop = False
+        held = horizon
+        result = 0.0
+        # 売り(下から来た)なら損切りが上・反対側の帯が下。買いは鏡像。
+        up = opposite if long_side else stop
+        down = stop if long_side else opposite
+        for step, c in enumerate(forward):
+            fav = max((c.high - limit) * sign, (c.low - limit) * sign)
+            adv = -min((c.high - limit) * sign, (c.low - limit) * sign)
+            best = max(best, fav)
+            worst = max(worst, adv)
+            if intrabar in ("stop_first", "no_same_bar_profit"):
+                # 損切りは高安で判定する。同じ足で有利にも動いていても、
+                # 順序が分からない以上こちらを先に見る。
+                touched = (c.low <= stop) if long_side else (c.high >= stop)
+                first = "stop" if touched else None
+                if first is None and opposite is not None and (
+                    intrabar == "stop_first" or step > 0
+                ):
+                    reached = ((c.high >= opposite) if long_side
+                               else (c.low <= opposite))
+                    first = "opp" if reached else None
+            else:
+                points = bar_points(fill_at + step)
+                if step == 0:
+                    # **指値へ届いた瞬間から先だけを見る。**
+                    after = _after_fill(points, limit, from_below)
+                    if after is None:      # 細かい足に無い(隙間)
+                        after = [limit]
+                    points = after
+                else:
+                    points = [forward[step - 1].close, *points]
+                side = _reach(points, up, down)
+                first = None
+                if side == ("down" if long_side else "up"):
+                    first = "stop"
+                elif side is not None:
+                    first = "opp"
+            if first == "stop":
+                hit_stop = True
+                held = step
+                result = -1.0
+                why, exit_price = "stop", stop
+                break
+            if first == "opp":
+                # 反対側の帯の **手前の縁**(建玉を持った時点の値)で手仕舞う。
+                held = step
+                result = (opposite - limit) * sign / risk
+                why, exit_price = "opp", opposite
+                break
+        if not hit_stop and why == "time":
+            result = (forward[-1].close - limit) * sign / risk
+            exit_price = forward[-1].close
+
+        return FadeTrade(
+                bar_index=i,
+                zone_price=zone.price if zone is not None else limit,
+                zone_width_atr=width,
+                touches=zone.count if zone is not None else 0,
+                atr=a,
+                from_below=from_below,
+                entry=limit,
+                stop=stop,
+                risk_atr=risk / a,
+                r_multiple=result,
+                max_favourable_r=best / risk,
+                max_adverse_r=worst / risk,
+                hit_stop=hit_stop,
+                bars_held=held,
+                long_side=long_side,
+                defenders_weak=weakening,
+                entry_hour=candles[fill_at].time.hour,
+                why=why, exit_price=exit_price,
+                fill_index=fill_at,
+                opposite_price=opposite if opposite is not None else 0.0,
+                zone_low=zone.low if zone is not None else 0.0,
+                zone_high=zone.high if zone is not None else 0.0,
+                # `Zone` は Swing の列、`RangeEdge` は足番号そのもの。
+                zone_touch_bars=tuple(
+                    sw if isinstance(sw, int) else sw.index
+                    for sw in zone.touches) if zone is not None else (),
+        )
 
     for i, candle in enumerate(candles):
         if higher is not None:
@@ -589,6 +732,7 @@ def collect_fade_trades(
                     # 列の長さが伸びない。折り返しの最値を追うには、
                     # 末尾を毎回入れ直す必要がある。
                     absorb_turn(detector.swings[-1])
+                note_swings()
                 hi_i += 1
             # **帯を引いた足の物差しで測る。**下位足の ATR で上位足の帯を
             # 測ると、幅の上限も損切りの余裕も小さすぎて別物になる。
@@ -603,11 +747,13 @@ def collect_fade_trades(
             seen_swings = len(detector.swings)
             if detector.swings:
                 absorb_turn(detector.swings[-1])
+            note_swings()
         atr_at.append(a)
 
         if i < warmup or a <= 0 or i + max_wait_bars + horizon >= len(candles):
             continue
-        if i <= busy_until:
+        open_until = [b for b in open_until if b >= i]
+        if len(open_until) >= max_open:
             continue
 
         # 有効な帯の一覧を毎足作り直すと、蓄積した帯の数に比例して重くなる
@@ -643,6 +789,48 @@ def collect_fade_trades(
         elif seen_swings != cached_swings or i - cached_at >= refresh_every:
             cached = tracker.zones(bar_index=age_index, min_touches=min_touches)
             cached_swings, cached_at = seen_swings, i
+
+        if edge_mode == "weakening":
+            # **押し負けが起きた瞬間に乗る。**帯に届くのを待たない。
+            # 抵抗帯へ向かう安値が切り上がったら買い、支持帯へ向かう
+            # 高値が切り下がったら売り。損切りはその構造の外側。
+            st = swing_state
+            rising = (st["prev_low"] is not None
+                      and st["last_low"] > st["prev_low"])
+            falling = (st["prev_high"] is not None
+                       and st["last_high"] < st["prev_high"])
+            fire_long = rising and not was_rising
+            fire_short = falling and not was_falling
+            was_rising, was_falling = rising, falling
+            if not (fire_long or fire_short) or i + 1 >= len(candles):
+                continue
+            long_side = bool(fire_long)
+            # **押されている帯が無ければ乗らない。**利用者の言う
+            # 「抵抗帯の押し負け」なので、押される相手が要る。
+            above = [z for z in cached if z.price > candle.close]
+            below = [z for z in cached if z.price <= candle.close]
+            if long_side and not above:
+                continue
+            if not long_side and not below:
+                continue
+            fill_at = i + 1                      # 次の足の始値で成行
+            limit = candles[fill_at].open
+            stop = (st["last_low"] - stop_buffer_atr * a if long_side
+                    else st["last_high"] + stop_buffer_atr * a)
+            risk = abs(stop - limit)
+            if risk <= 0 or (limit <= stop) is long_side:
+                continue                          # 既に損切りの向こう側
+            target = (min(above, key=lambda z: z.price) if long_side
+                      else max(below, key=lambda z: z.price))
+            t = _run_position(
+                i=i, fill_at=fill_at, limit=limit, stop=stop, risk=risk,
+                long_side=long_side, from_below=long_side, opposite=None,
+                zone=target, width=target.width / a, a=a, weakening=True,
+            )
+            if t is not None:
+                trades.append(t)
+                open_until.append(t.fill_index + t.bars_held)
+            continue
 
         # 上下 2 本の帯が揃っているときだけ触る(利用者の言う「レンジ」)。
         # 片側だけで張ると、そこを抜けられたときに一方的に負ける。
@@ -792,100 +980,17 @@ def collect_fade_trades(
                     # 向こう側へ回り込み、-35 R の「利確」が発生していた。
                     opposite = picked.high if from_below else picked.low
 
-            sign = 1.0 if long_side else -1.0
-            # **約定した足そのものから見る。**その足の残りで損切りまで
-            # 走ることは普通にある。翌足から数えると、いちばん不利な
-            # 場面だけを見逃して成績が良く出る。
-            forward = candles[fill_at : fill_at + 1 + horizon]
-            if len(forward) < horizon + 1:
-                continue
-
-            best = worst = 0.0
-            why, exit_price = "time", 0.0
-            hit_stop = False
-            held = horizon
-            result = 0.0
-            # 売り(下から来た)なら損切りが上・反対側の帯が下。買いは鏡像。
-            up = opposite if long_side else stop
-            down = stop if long_side else opposite
-            for step, c in enumerate(forward):
-                fav = max((c.high - limit) * sign, (c.low - limit) * sign)
-                adv = -min((c.high - limit) * sign, (c.low - limit) * sign)
-                best = max(best, fav)
-                worst = max(worst, adv)
-                if intrabar in ("stop_first", "no_same_bar_profit"):
-                    # 損切りは高安で判定する。同じ足で有利にも動いていても、
-                    # 順序が分からない以上こちらを先に見る。
-                    touched = (c.low <= stop) if long_side else (c.high >= stop)
-                    first = "stop" if touched else None
-                    if first is None and opposite is not None and (
-                        intrabar == "stop_first" or step > 0
-                    ):
-                        reached = ((c.high >= opposite) if long_side
-                                   else (c.low <= opposite))
-                        first = "opp" if reached else None
-                else:
-                    points = bar_points(fill_at + step)
-                    if step == 0:
-                        # **指値へ届いた瞬間から先だけを見る。**
-                        after = _after_fill(points, limit, from_below)
-                        if after is None:      # 細かい足に無い(隙間)
-                            after = [limit]
-                        points = after
-                    else:
-                        points = [forward[step - 1].close, *points]
-                    side = _reach(points, up, down)
-                    first = None
-                    if side == ("down" if long_side else "up"):
-                        first = "stop"
-                    elif side is not None:
-                        first = "opp"
-                if first == "stop":
-                    hit_stop = True
-                    held = step
-                    result = -1.0
-                    why, exit_price = "stop", stop
-                    break
-                if first == "opp":
-                    # 反対側の帯の **手前の縁**(建玉を持った時点の値)で手仕舞う。
-                    held = step
-                    result = (opposite - limit) * sign / risk
-                    why, exit_price = "opp", opposite
-                    break
-            if not hit_stop and why == "time":
-                result = (forward[-1].close - limit) * sign / risk
-                exit_price = forward[-1].close
-
-            trades.append(
-                FadeTrade(
-                    bar_index=i,
-                    zone_price=zone.price,
-                    zone_width_atr=width,
-                    touches=zone.count,
-                    atr=a,
-                    from_below=from_below,
-                    entry=limit,
-                    stop=stop,
-                    risk_atr=risk / a,
-                    r_multiple=result,
-                    max_favourable_r=best / risk,
-                    max_adverse_r=worst / risk,
-                    hit_stop=hit_stop,
-                    bars_held=held,
-                    long_side=long_side,
-                    defenders_weak=weakening,
-                    entry_hour=candles[fill_at].time.hour,
-                    why=why, exit_price=exit_price,
-                    fill_index=fill_at,
-                    opposite_price=opposite if opposite is not None else 0.0,
-                    zone_low=zone.low, zone_high=zone.high,
-                    # `Zone` は Swing の列、`RangeEdge` は足番号そのもの。
-                    zone_touch_bars=tuple(
-                        sw if isinstance(sw, int) else sw.index
-                        for sw in zone.touches),
-                )
+            t = _run_position(
+                i=i, fill_at=fill_at, limit=limit, stop=stop, risk=risk,
+                long_side=long_side, from_below=from_below,
+                opposite=opposite, zone=zone, width=width, a=a,
+                weakening=weakening,
             )
-            busy_until = fill_at + held   # 同時に 1 建玉。決済したら次を張れる
-            break
+            if t is None:
+                continue
+            trades.append(t)
+            open_until.append(t.fill_index + t.bars_held)
+            if len(open_until) >= max_open:
+                break
 
     return trades

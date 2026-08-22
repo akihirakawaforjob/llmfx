@@ -861,3 +861,75 @@ def test_the_fade_side_ignores_the_break_confirmation():
 def test_an_unknown_break_confirm_is_refused():
     with pytest.raises(ValueError):
         trades(horizon=24, break_confirm="whatever")
+
+
+# --- 押し負けが起きた瞬間に乗る -------------------------------------------
+
+
+def test_the_weakening_entry_does_not_wait_for_the_edge():
+    """利用者の指摘: **抵抗帯の押し負けが発生した時点で乗る。**
+
+    帯へ届くのを待たないので、建玉を持つ位置は帯から離れている。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  higher_minutes=60, zone_source="range", range_bars=120,
+                  entry_at_zone_extreme=True)
+    got = collect_fade_trades(candles, **common, edge_mode="weakening")
+    assert got
+    for t in got:
+        edge = t.zone_high if t.long_side else t.zone_low
+        assert abs(t.entry - edge) > 1e-9, "帯の上で建玉を持っている"
+        assert t.defenders_weak, t
+
+
+def test_the_weakening_entry_needs_a_zone_being_pressured():
+    """押される相手が無ければ乗らない。ただの高値切り上げ買いではない。"""
+    got = collect_fade_trades(
+        generate_synthetic_candles(count=20_000, seed=5),
+        stop_buffer_atr=1.5, max_wait_bars=12, horizon=240, higher_minutes=60,
+        zone_source="range", range_bars=120, entry_at_zone_extreme=True,
+        edge_mode="weakening")
+    for t in got:
+        if t.long_side:
+            assert t.zone_price > t.entry, t
+        else:
+            assert t.zone_price < t.entry, t
+
+
+def test_the_weakening_stop_sits_beyond_the_structure():
+    """損切りは切り上がった安値の下(買い)/ 切り下がった高値の上(売り)。"""
+    got = collect_fade_trades(
+        generate_synthetic_candles(count=20_000, seed=5),
+        stop_buffer_atr=1.5, max_wait_bars=12, horizon=240, higher_minutes=60,
+        zone_source="range", range_bars=120, entry_at_zone_extreme=True,
+        edge_mode="weakening")
+    assert got
+    for t in got:
+        if t.long_side:
+            assert t.stop < t.entry, t
+        else:
+            assert t.stop > t.entry, t
+
+
+def test_more_open_positions_take_more_of_the_chances():
+    """利用者の指摘:
+
+        レンジの往復を取る時に建玉があると指値を入れられない
+        = 機会損失となりうる。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  higher_minutes=60, zone_source="range", range_bars=120,
+                  entry_at_zone_extreme=True, edge_mode="break")
+    one = collect_fade_trades(candles, **common, max_open=1)
+    many = collect_fade_trades(candles, **common, max_open=4)
+    assert len(many) > len(one) * 1.5, (len(one), len(many))
+    # 1 建玉のときの取引は、多建玉のときにも必ず含まれる
+    keys = {(t.fill_index, round(t.entry, 8)) for t in many}
+    assert all((t.fill_index, round(t.entry, 8)) in keys for t in one)
+
+
+def test_max_open_must_be_at_least_one():
+    with pytest.raises(ValueError):
+        trades(horizon=24, max_open=0)
