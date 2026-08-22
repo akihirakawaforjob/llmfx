@@ -275,6 +275,7 @@ def collect_fade_trades(
     break_confirm: str = "touch",
     break_confirm_atr: float = 0.0,
     max_open: int = 1,
+    arm_within_atr: float = 0.0,
     entry_beyond_atr: float = 0.0,
     warmup: int = 200,
     refresh_every: int = 50,
@@ -403,7 +404,20 @@ def collect_fade_trades(
     `close` は確認を待つぶん値段が悪くなるが、**触っただけで反転する形
     (跳ね返り側が狙っているまさにその形)を拾わずに済む**。
 
-    `entry_beyond_atr` は指値を極値の **さらに外側** へ置く。利用者の言う
+    `arm_within_atr` は **帯へどこまで近づいたら場面として見るか**。
+    0 なら「帯に触れた足」だけ。利用者の指摘:
+
+        もし本当に強固な抵抗帯に乗れているとしたら、たまたま跳ねた部分に
+        乗っているだけで **約定しなかった** 可能性がある。
+        少し手前にズラすのもあり。
+
+    **触れた足しか見ないと、手前に指値を置いても意味が無い。**帯の直前で
+    折り返した場面はそもそも候補に入らないので、指値の位置を変えても
+    件数が動かない(実測でも 1,531 → 1,526 とほぼ同じだった)。
+    `entry_beyond_atr` を負にして手前へ寄せるなら、ここも同じだけ広げる。
+
+    `entry_beyond_atr` は指値を極値の **さらに外側** へ置く。負にすると
+    **手前(レンジの内側)**。利用者の言う
     「抵抗帯の少し奥(スプレッド対策)に予め指値を設定しておく」。
     外へ置くほど約定しなくなるが、**約定しなければそもそも負けない**。
 
@@ -854,8 +868,12 @@ def collect_fade_trades(
             key = getattr(zone, "edge_key", None) or id(zone)
 
             # 帯から十分離れたら、次の待ち伏せを許す。
-            if not (zone.low <= candle.high and zone.high >= candle.low):
+            # `arm_within_atr` のぶん帯を広げて見る(手前で折り返す形を拾う)。
+            near = arm_within_atr * a
+            if not (zone.low - near <= candle.high and zone.high + near >= candle.low):
                 away = min(abs(candle.close - zone.low), abs(candle.close - zone.high))
+                # **再武装の距離は広げない。**ここも広げると、見る範囲を
+                # 広げたぶんだけ次の待ち伏せが遅れて、件数が逆に減る。
                 if away > a:
                     armed[key] = True
                 continue

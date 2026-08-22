@@ -933,3 +933,39 @@ def test_more_open_positions_take_more_of_the_chances():
 def test_max_open_must_be_at_least_one():
     with pytest.raises(ValueError):
         trades(horizon=24, max_open=0)
+
+
+def test_widening_the_watch_band_finds_setups_that_never_reached_the_edge():
+    """**触れた足しか見ないと、手前に置いた指値は意味を持たない。**
+
+    利用者の指摘: 強固な帯なら、届く前に折り返して約定しないことがある。
+    その場面はそもそも候補に入らないので、指値の位置を変えても件数が
+    動かない(実測で 1,531 → 1,526)。見る範囲も一緒に広げる。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    # **建玉の枠で頭打ちにならないようにする。**枠が 1 だと、保有中に
+    # 起きた場面は数えられないので、見る範囲を広げても件数が動かない。
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=24,
+                  higher_minutes=60, zone_source="range", range_bars=120,
+                  entry_at_zone_extreme=True, edge_mode="fade",
+                  exit_at_opposite_zone=True, entry_beyond_atr=-0.5, max_open=8)
+    tight = collect_fade_trades(candles, **common, arm_within_atr=0.0)
+    wide = collect_fade_trades(candles, **common, arm_within_atr=0.5)
+    assert tight and wide
+    assert len(wide) > len(tight) * 1.1, (len(tight), len(wide))
+
+
+def test_the_watch_band_does_not_change_where_the_limit_sits():
+    """広げるのは「見る範囲」だけ。指値の位置は `entry_beyond_atr` が決める。"""
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    got = collect_fade_trades(
+        candles, stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+        higher_minutes=60, zone_source="range", range_bars=120,
+        entry_at_zone_extreme=True, edge_mode="fade", exit_at_opposite_zone=True,
+        entry_beyond_atr=-0.5, arm_within_atr=0.5)
+    assert got
+    for t in got[:100]:
+        edge = t.zone_high if t.from_below else t.zone_low
+        gap = (edge - t.entry) if t.from_below else (t.entry - edge)
+        assert gap > 0, t          # 端より手前にある
+        assert abs(gap - 0.5 * t.atr) < 1e-6, t
