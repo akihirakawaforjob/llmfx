@@ -437,3 +437,31 @@ def test_every_trade_records_where_it_exited():
     assert {"stop", "opp"} <= {t.why for t in got}
     for t in got:
         assert (t.why == "stop") == t.hit_stop, t
+
+
+# --- 1 本の足の中の道順 ---------------------------------------------------
+
+
+def test_the_fill_bar_can_be_excluded_from_taking_profit():
+    """**四本値では 1 本の足の中の道順が分からない。**
+
+    約定した足で反対側の帯へ届いていても、実際には安値を先に付けてから
+    高値を付けた(= 指値に届く前に利確地点を通過していた)かもしれない。
+    既定はこれをこちらに有利な側に解釈している。損切りは逆に常に不利な側
+    (同じ足で両方に触れたら損切りが先)なので、利確だけが甘い。
+
+    実測(USD/JPY 開発用)では利確の 87.6% が約定足そのもので起きていて、
+    ここを不利側に倒すと差引 +0.114 R が -0.185 R になる。**符号が変わる。**
+    決着には M1 のような細かい足で道順を解く必要がある。
+    """
+    same = trades(horizon=24, exit_at_opposite_zone=True, same_bar_exit=True)
+    strict = trades(horizon=24, exit_at_opposite_zone=True, same_bar_exit=False)
+    assert same and strict
+    assert not [t for t in strict if t.why == "opp" and t.bars_held == 0]
+    assert [t for t in same if t.why == "opp" and t.bars_held == 0]
+
+
+def test_stops_are_still_taken_on_the_fill_bar_either_way():
+    """利確だけを厳しくする。損切りは常に約定足から見る。"""
+    strict = trades(horizon=24, exit_at_opposite_zone=True, same_bar_exit=False)
+    assert [t for t in strict if t.why == "stop" and t.bars_held == 0]

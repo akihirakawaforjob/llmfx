@@ -171,6 +171,7 @@ def collect_fade_trades(
     skip_break_risk: bool = False,
     entry_from_range_bars: int | None = None,
     stop_from_range_bars: int | None = None,
+    same_bar_exit: bool = True,
     warmup: int = 200,
     refresh_every: int = 50,
 ) -> list[FadeTrade]:
@@ -228,6 +229,15 @@ def collect_fade_trades(
     注意: 反対側で切ると、**そのまま抜けて走る場合の裾も切る**。
     利用者は「反対側を抜けてそのまま走ったら全部が取り分」と言っている
     ので、ここは掃引して確かめる軸であって、既定では入れない。
+
+    `same_bar_exit=False` は **約定した足そのものでの利確を認めない**。
+
+    1 本の足の中の道順は四本値からは分からない。約定した足で反対側の帯へ
+    届いていても、実際には「先に安値を付けてから高値を付けた」= 指値に
+    届く前に利確地点を通過していた、かもしれない。既定(True)はこれを
+    こちらに有利な側に解釈している。損切りについては逆に **常に不利な側**
+    (同じ足で両方に触れたら損切りが先)で扱っているので、利確だけが
+    甘い扱いになっている。ここを揃えるとどれだけ減るかを測るための軸。
 
     `blocked_hours_utc` はその UTC 時に **建玉を持たない**。
 
@@ -450,7 +460,7 @@ def collect_fade_trades(
                     result = -1.0
                     why, exit_price = "stop", stop
                     break
-                if opposite is not None:
+                if opposite is not None and (same_bar_exit or step > 0):
                     # 反対側の帯の **手前の縁**(建玉を持った時点の値)で手仕舞う。
                     reached = (c.low <= opposite) if from_below else (c.high >= opposite)
                     if reached:
