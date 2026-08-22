@@ -500,3 +500,59 @@ def test_path_mode_requires_the_finer_candles():
 def test_an_unknown_intrabar_mode_is_refused():
     with pytest.raises(ValueError):
         trades(horizon=24, intrabar="whatever")
+
+
+# --- 帯を引いた足の物差しで測る -------------------------------------------
+
+
+def test_scaling_to_the_zone_timeframe_widens_the_stop():
+    """上位足の帯を下位足の ATR で測ると、損切りが小さすぎて別物になる。
+
+    利用者の指摘: 抵抗帯の最値は、参照している時間軸の抵抗帯と一緒で
+    あるべき。物差しも最値も、帯を引いた足のものを使う。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(entry_from_range_bars=20, stop_buffer_atr=0.75,
+                  max_zone_width_atr=1.5, max_wait_bars=12, horizon=24,
+                  exit_at_opposite_zone=True, higher_minutes=60)
+    low = collect_fade_trades(candles, **common)
+    high = collect_fade_trades(candles, **common, scale_to_zone_timeframe=True)
+    assert low and high
+    med = lambda ts: sorted(abs(t.stop - t.entry) for t in ts)[len(ts) // 2]
+    assert med(high) > med(low) * 1.5, (med(low), med(high))
+    # R の分母は ATR で割り戻すので、どちらも 0.75 のまま
+    assert abs(sorted(t.risk_atr for t in high)[len(high) // 2] - 0.75) < 0.01
+
+
+def test_scaling_has_no_effect_without_a_higher_timeframe():
+    """帯を下位足で引いているなら、合わせる先が無いので何も変わらない。"""
+    plain = trades(horizon=24, entry_from_range_bars=20, exit_at_opposite_zone=True)
+    same = trades(horizon=24, entry_from_range_bars=20, exit_at_opposite_zone=True,
+                  scale_to_zone_timeframe=True)
+    assert [t.entry for t in plain] == [t.entry for t in same]
+
+
+def test_the_higher_timeframe_extreme_only_uses_closed_bars():
+    """まだ閉じていない上位足の最値を使うと先読みになる。
+
+    データを途中で打ち切っても、それ以前に決済が終わった取引は 1 件も
+    変わらないこと。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(entry_from_range_bars=20, stop_buffer_atr=0.75,
+                  max_zone_width_atr=1.5, max_wait_bars=12, horizon=24,
+                  exit_at_opposite_zone=True, higher_minutes=60,
+                  scale_to_zone_timeframe=True)
+    full = collect_fade_trades(candles, **common)
+    cut = collect_fade_trades(candles[:12_000], **common)
+    assert cut
+    done = [t for t in full if t.bar_index + t.bars_held < 12_000 - 24 - 12]
+    keep = {t.bar_index: t for t in cut}
+    checked = 0
+    for t in done:
+        if t.bar_index in keep:
+            got = keep[t.bar_index]
+            assert (got.entry, got.stop, got.r_multiple) == \
+                (t.entry, t.stop, t.r_multiple), t
+            checked += 1
+    assert checked > 20, checked

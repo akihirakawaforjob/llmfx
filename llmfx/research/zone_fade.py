@@ -220,6 +220,7 @@ def collect_fade_trades(
     stop_from_range_bars: int | None = None,
     intrabar: str = "stop_first",
     path_candles: list[Candle] | None = None,
+    scale_to_zone_timeframe: bool = False,
     warmup: int = 200,
     refresh_every: int = 50,
 ) -> list[FadeTrade]:
@@ -262,6 +263,22 @@ def collect_fade_trades(
     `higher_minutes` を渡すと **帯を上位足で引く**。利用者の指定は
     「エントリーに使う時間軸の 2 つ上位」(M15 なら H1)。閉じた上位足
     しか使わないので先読みにならない。
+
+    `scale_to_zone_timeframe` は、帯を上位足で引いたときに **物差しも
+    その足に合わせる**。利用者の指摘:
+
+        抵抗帯の最値は、参照している時間軸の抵抗帯と一緒であるべき。
+
+    切り替わるのは 3 つ。どれも「どの足で見た値か」という同じ話なので
+    ひとまとめにしてある:
+
+    - ATR(帯の幅の上限、指値の差し込み、損切りの余裕、再武装の距離)
+    - 指値を置く直近 N 本の最値
+    - 損切りの基準にする直近 N 本の最値
+
+    **これを外すと、上位足の帯を下位足の物差しで測ることになる。**
+    帯の幅の上限も損切りの余裕も小さすぎて、別物の取引になる。
+    過去に「上位足の距離を下位足の ATR で測る」で同じ罠を踏んでいる。
 
     `exit_at_opposite_zone` は、**反対側の帯へ届いたらそこで手仕舞う**。
     利用者の説明:
@@ -342,6 +359,11 @@ def collect_fade_trades(
     # 実測では 48 通りの掃引が 1 銘柄 1 時間を超えた。O(n) で先に作る。
     roll_high, roll_low = _rolling_extremes(candles, stop_from_range_bars)
     entry_high, entry_low = _rolling_extremes(candles, entry_from_range_bars)
+    if higher is not None and scale_to_zone_timeframe:
+        roll_high_h, roll_low_h = _rolling_extremes(higher, stop_from_range_bars)
+        entry_high_h, entry_low_h = _rolling_extremes(higher, entry_from_range_bars)
+    else:
+        roll_high_h = roll_low_h = entry_high_h = entry_low_h = None
 
     if intrabar not in ("stop_first", "no_same_bar_profit", "ohlc", "path"):
         raise ValueError(f"intrabar が不正: {intrabar!r}")
@@ -392,7 +414,10 @@ def collect_fade_trades(
                     tracker.update(swing, atr=atr_high[hi_i], bar_index=hi_bar)
                 seen_swings = len(detector.swings)
                 hi_i += 1
-            a = atr_low[i]
+            # **帯を引いた足の物差しで測る。**下位足の ATR で上位足の帯を
+            # 測ると、幅の上限も損切りの余裕も小さすぎて別物になる。
+            a = (atr_high[hi_bar] if scale_to_zone_timeframe and hi_bar >= 0
+                 else atr_low[i])
         else:
             detector.update(candle)
             a = detector.atr or 0.0
@@ -455,27 +480,39 @@ def collect_fade_trades(
             ):
                 continue
 
+            # 帯を引いた足の最値を使うなら、最後に **閉じた** 上位足まで。
+            # 下位足なら 1 本前まで(その足自身の最値で約定判定をすると
+            # 「更新したからその値で約定した」という循環になる)。
+            if entry_high_h is not None:
+                e_hi, e_lo, r_hi, r_lo, k = (
+                    entry_high_h, entry_low_h, roll_high_h, roll_low_h, hi_bar)
+                k_stop = hi_bar
+            else:
+                e_hi, e_lo, r_hi, r_lo, k = (
+                    entry_high, entry_low, roll_high, roll_low, i - 1)
+                k_stop = i
+
             if from_below:
-                if entry_high is not None:
-                    # 天井で売る。最値は 1 本前まで(循環を避ける)。
-                    limit = max(zone.high, entry_high[i - 1])
+                if e_hi is not None:
+                    # 天井で売る。
+                    limit = max(zone.high, e_hi[k])
                 else:
                     limit = zone.low + entry_offset_atr * a
                 edge = max(zone.high, limit)
-                if roll_high is not None:
+                if r_hi is not None:
                     # 帯そのものの縁ではなく、もっと広い範囲の最値を使う。
                     # 帯を作ったスイングの縁だけだと、少しのはみ出しで
                     # 刈られる。利用者の指摘。
-                    edge = max(edge, roll_high[i])
+                    edge = max(edge, r_hi[k_stop])
                 stop = edge + stop_buffer_atr * a
             else:
-                if entry_low is not None:
-                    limit = min(zone.low, entry_low[i - 1])
+                if e_lo is not None:
+                    limit = min(zone.low, e_lo[k])
                 else:
                     limit = zone.high - entry_offset_atr * a
                 edge = min(zone.low, limit)
-                if roll_low is not None:
-                    edge = min(edge, roll_low[i])
+                if r_lo is not None:
+                    edge = min(edge, r_lo[k_stop])
                 stop = edge - stop_buffer_atr * a
             risk = abs(stop - limit)
             if risk <= 0:
