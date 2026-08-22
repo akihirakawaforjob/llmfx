@@ -161,6 +161,34 @@ def _after_fill(points: tuple[float, ...] | list[float], limit: float,
 
 
 @dataclass
+class RangeEdge:
+    """**チャートに映っている範囲の端**。利用者が赤い線を引く場所。
+
+    スイングの塊(`Zone`)ではなく、直近 N 本の最高値・最安値そのもの。
+    利用者が見せてくれた 5 分足・15 分足・1 時間足の 3 枚とも、線は
+    その足で表示されている窓の上端と下端に引かれていた。**足を変えれば
+    線も変わる**のはそのため。二つ上位の足で 2 本探すという説明とも合う
+    (上端と下端で 1 組のレンジになる)。
+
+    `Zone` と同じ面を持たせて、後段の処理を共通にする。
+    """
+
+    low: float
+    high: float
+    edge_key: str
+    count: int = 0
+    touches: tuple = ()
+
+    @property
+    def price(self) -> float:
+        return (self.low + self.high) / 2
+
+    @property
+    def width(self) -> float:
+        return self.high - self.low
+
+
+@dataclass
 class FadeTrade:
     """帯へ置いた指値が約定してからの成果."""
 
@@ -231,6 +259,9 @@ def collect_fade_trades(
     path_candles: list[Candle] | None = None,
     scale_to_zone_timeframe: bool = False,
     entry_at_zone_extreme: bool = False,
+    zone_source: str = "pivots",
+    range_bars: int = 120,
+    entry_beyond_atr: float = 0.0,
     warmup: int = 200,
     refresh_every: int = 50,
 ) -> list[FadeTrade]:
@@ -273,6 +304,26 @@ def collect_fade_trades(
     `higher_minutes` を渡すと **帯を上位足で引く**。利用者の指定は
     「エントリーに使う時間軸の 2 つ上位」(M15 なら H1)。閉じた上位足
     しか使わないので先読みにならない。
+
+    `zone_source` は帯をどう作るか。
+
+    | 値 | 中身 |
+    | --- | --- |
+    | `pivots` | 確定スイングを ATR 0.5 でまとめた塊。2 回以上試された水準 |
+    | `range` | **直近 `range_bars` 本の最高値と最安値**。上端と下端の 2 本 |
+
+    `range` は利用者が実際に線を引く場所。5 分足・15 分足・1 時間足の
+    3 枚を見せてもらったところ、線はどれも **その足で表示されている窓の
+    上端と下端** にあった。足を変えれば線も変わる。「二つ上位の足で
+    抵抗帯を 2 つ探し、その間の往復を刈る」という説明とも合う。
+
+    `pivots` は「何度も試された水準」を探しに行くが、実データでは
+    接触 2 回だけの薄い帯が大量に出て、利用者が見て帯と認めない場所で
+    建玉を持っていた(`docs/zone-trades-h1.html`)。
+
+    `entry_beyond_atr` は指値を極値の **さらに外側** へ置く。利用者の言う
+    「抵抗帯の少し奥(スプレッド対策)に予め指値を設定しておく」。
+    外へ置くほど約定しなくなるが、**約定しなければそもそも負けない**。
 
     `entry_at_zone_extreme` は **帯そのものの極値に指値を置く**。
     利用者の手法はこれ:
@@ -385,6 +436,13 @@ def collect_fade_trades(
     # 実測では 48 通りの掃引が 1 銘柄 1 時間を超えた。O(n) で先に作る。
     roll_high, roll_low = _rolling_extremes(candles, stop_from_range_bars)
     entry_high, entry_low = _rolling_extremes(candles, entry_from_range_bars)
+    if zone_source not in ("pivots", "range"):
+        raise ValueError(f"zone_source が不正: {zone_source!r}")
+    if zone_source == "range":
+        edge_high, edge_low = _rolling_extremes(
+            higher if higher is not None else candles, range_bars)
+    else:
+        edge_high = edge_low = None
     if higher is not None and scale_to_zone_timeframe:
         roll_high_h, roll_low_h = _rolling_extremes(higher, stop_from_range_bars)
         entry_high_h, entry_low_h = _rolling_extremes(higher, entry_from_range_bars)
@@ -464,7 +522,14 @@ def collect_fade_trades(
         age_index = hi_bar if higher is not None else i
         if age_index < 0:
             continue
-        if seen_swings != cached_swings or i - cached_at >= refresh_every:
+        if zone_source == "range":
+            # 映っている範囲の端。**閉じた足まで**で作る(先読みを避ける)。
+            k = hi_bar if higher is not None else i - 1
+            if k < 0 or edge_high is None or edge_high[k] <= edge_low[k]:
+                continue
+            cached = [RangeEdge(edge_high[k], edge_high[k], "top"),
+                      RangeEdge(edge_low[k], edge_low[k], "bottom")]
+        elif seen_swings != cached_swings or i - cached_at >= refresh_every:
             cached = tracker.zones(bar_index=age_index, min_touches=min_touches)
             cached_swings, cached_at = seen_swings, i
 
@@ -487,7 +552,7 @@ def collect_fade_trades(
             width = zone.width / a
             if max_zone_width_atr is not None and width > max_zone_width_atr:
                 continue
-            key = id(zone)
+            key = getattr(zone, "edge_key", None) or id(zone)
 
             # 帯から十分離れたら、次の待ち伏せを許す。
             if not (zone.low <= candle.high and zone.high >= candle.low):
@@ -524,7 +589,7 @@ def collect_fade_trades(
             if from_below:
                 if entry_at_zone_extreme:
                     # 帯の極値そのもの = 折り返しの天井で売る。
-                    limit = zone.high
+                    limit = zone.high + entry_beyond_atr * a
                 elif e_hi is not None:
                     limit = max(zone.high, e_hi[k])
                 else:
@@ -538,7 +603,7 @@ def collect_fade_trades(
                 stop = edge + stop_buffer_atr * a
             else:
                 if entry_at_zone_extreme:
-                    limit = zone.low
+                    limit = zone.low - entry_beyond_atr * a
                 elif e_lo is not None:
                     limit = min(zone.low, e_lo[k])
                 else:

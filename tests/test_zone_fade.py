@@ -597,3 +597,72 @@ def test_the_stop_stays_on_the_lower_timeframe_scale():
     assert low and high
     med = lambda ts: sorted(abs(t.stop - t.entry) for t in ts)[len(ts) // 2]
     assert med(low) < med(high), (med(low), med(high))
+
+
+# --- 映っている範囲の端で張る(利用者が線を引く場所)-----------------------
+
+
+def test_range_edges_are_the_window_high_and_low():
+    """帯 = 直近 N 本の最高値と最安値。スイングの塊ではない。
+
+    利用者が見せてくれた 5 分足・15 分足・1 時間足の 3 枚とも、線は
+    その足で表示されている窓の上端と下端に引かれていた。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    got = collect_fade_trades(
+        candles, stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
+        exit_at_opposite_zone=True, zone_source="range", range_bars=100,
+        entry_at_zone_extreme=True)
+    assert got
+    for t in got[:200]:
+        window = candles[max(0, t.bar_index - 100):t.bar_index]
+        if t.from_below:
+            assert abs(t.entry - max(c.high for c in window)) < 1e-9, t
+        else:
+            assert abs(t.entry - min(c.low for c in window)) < 1e-9, t
+
+
+def test_the_range_edge_never_uses_the_current_bar():
+    """その足自身の最値を使うと「更新したから約定した」という循環になる。"""
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    got = collect_fade_trades(
+        candles, stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
+        exit_at_opposite_zone=True, zone_source="range", range_bars=100,
+        entry_at_zone_extreme=True)
+    for t in got[:200]:
+        c = candles[t.bar_index]
+        if t.from_below:
+            assert t.entry <= max(x.high for x in candles[:t.bar_index]), t
+        else:
+            assert t.entry >= min(x.low for x in candles[:t.bar_index]), t
+
+
+def test_the_limit_can_be_pushed_beyond_the_edge():
+    """利用者の言う「抵抗帯の少し奥(スプレッド対策)に指値を置く」。
+
+    外へ置くほど約定しなくなる。**約定しなければそもそも負けない。**
+    """
+    common = dict(stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
+                  exit_at_opposite_zone=True, zone_source="range",
+                  range_bars=100, entry_at_zone_extreme=True)
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    at = collect_fade_trades(candles, **common)
+    out = collect_fade_trades(candles, **common, entry_beyond_atr=0.5)
+    assert at and out
+    assert len(out) < len(at), (len(at), len(out))
+
+
+def test_range_edges_and_pivot_zones_are_different_places():
+    """両者は別物。片方で測った結論をもう片方へ持ち込まない。"""
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
+                  exit_at_opposite_zone=True, entry_at_zone_extreme=True)
+    a = collect_fade_trades(candles, **common, zone_source="pivots")
+    b = collect_fade_trades(candles, **common, zone_source="range", range_bars=100)
+    assert a and b
+    assert {t.entry for t in a} != {t.entry for t in b}
+
+
+def test_an_unknown_zone_source_is_refused():
+    with pytest.raises(ValueError):
+        trades(horizon=24, zone_source="whatever")
