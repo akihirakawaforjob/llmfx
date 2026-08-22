@@ -198,7 +198,7 @@ class FadeTrade:
     touches: int
     atr: float
     from_below: bool
-    """True なら下から来た(= 抵抗帯で売る)。"""
+    """True なら価格は **下から** 帯へ来た(上の端)。売買の向きではない。"""
     entry: float
     stop: float
     risk_atr: float
@@ -209,6 +209,9 @@ class FadeTrade:
     max_adverse_r: float
     hit_stop: bool
     bars_held: int
+    long_side: bool = False
+    """True なら買い。跳ね返りに乗るか抜けた側に乗るかで逆になるので、
+    `from_below` だけでは向きが決まらない。"""
     entry_hour: int = 0
     """約定した足の UTC 時。スプレッドが開く時間帯を後から評価するのに使う。"""
     why: str = ""
@@ -262,6 +265,7 @@ def collect_fade_trades(
     zone_source: str = "pivots",
     range_bars: int = 120,
     range_needs_turn: bool = True,
+    edge_mode: str = "fade",
     entry_beyond_atr: float = 0.0,
     warmup: int = 200,
     refresh_every: int = 50,
@@ -332,6 +336,29 @@ def collect_fade_trades(
     `pivots` は「何度も試された水準」を探しに行くが、実データでは
     接触 2 回だけの薄い帯が大量に出て、利用者が見て帯と認めない場所で
     建玉を持っていた(`docs/zone-trades-h1.html`)。
+
+    `edge_mode` は **帯に来たときにどちらへ乗るか**。利用者の説明:
+
+        帯が何を示したかに従う。弾かれたら跳ね返りに乗り、抜けたら
+        抜けた側に乗る。**帯に来た時点では方向を決めない。**
+
+    | 値 | 中身 |
+    | --- | --- |
+    | `fade` | いつも跳ね返り側(帯で逆張り) |
+    | `break` | いつも抜けた側(帯の外へ乗る) |
+    | `auto` | **守り手が押し負けていれば抜けた側、そうでなければ跳ね返り側** |
+
+    `auto` の判定は `defenders_weakening`(抵抗帯へ向かう安値が切り上がって
+    いるか)。利用者の指摘:
+
+        抵抗帯への高値切り下げや安値切り上げが起きたらエントリーを
+        見送ったと思うが、**あれはむしろエントリーすべきサイン**だと僕は思う。
+
+    これは `skip_break_risk`(見送る)と同じ判定を、逆の使い方にしたもの。
+
+    抜けた側に乗る場合は、
+    **入りが逆指値になるのでスプレッドを往復ぶん払う**(跳ね返り側は
+    指値なので入りは無料)。反対側の帯は損失方向になるので決済先にしない。
 
     `entry_beyond_atr` は指値を極値の **さらに外側** へ置く。利用者の言う
     「抵抗帯の少し奥(スプレッド対策)に予め指値を設定しておく」。
@@ -450,6 +477,8 @@ def collect_fade_trades(
     entry_high, entry_low = _rolling_extremes(candles, entry_from_range_bars)
     if zone_source not in ("pivots", "range"):
         raise ValueError(f"zone_source が不正: {zone_source!r}")
+    if edge_mode not in ("fade", "break", "auto"):
+        raise ValueError(f"edge_mode が不正: {edge_mode!r}")
     if zone_source == "range" and not range_needs_turn:
         edge_high, edge_low = _rolling_extremes(
             higher if higher is not None else candles, range_bars)
@@ -619,13 +648,19 @@ def collect_fade_trades(
 
             from_below = candles[i - 1].close < zone.price
 
+            # 守り手が押し負けているか。見送る材料にも、抜けた側へ乗る
+            # 材料にもなる(利用者は後者だと言っている)。
+            weakening = defenders_weakening(detector.swings, from_below, age_index)
+            take_break = edge_mode == "break" or (edge_mode == "auto" and weakening)
+            # 上の端を上抜けるなら買い、下の端を下抜けるなら売り。
+            # 跳ね返りに乗るならその逆。
+            long_side = from_below if take_break else not from_below
+
             # ブレイクリスク: 守り手が押し負け始めている帯には近づかない。
             # **足番号は帯を引いた足のもの。**上位足で帯を引いているのに
             # 下位足の番号で確定を判定すると、比較する物差しが揃わない
             # (数が 4 倍あるので、どのスイングも「確定済み」になる)。
-            if skip_break_risk and defenders_weakening(
-                detector.swings, from_below, age_index
-            ):
+            if skip_break_risk and weakening:
                 continue
 
             # 帯を引いた足の最値を使うなら、最後に **閉じた** 上位足まで。
@@ -666,6 +701,11 @@ def collect_fade_trades(
                 if r_lo is not None:
                     edge = min(edge, r_lo[k_stop])
                 stop = edge - stop_buffer_atr * a
+            if take_break:
+                # 抜けた側に乗るなら、損切りは **帯の内側** へ戻る。
+                # 上の端を上抜けて買うなら、損切りは端の下。
+                stop = (limit - stop_buffer_atr * a if long_side
+                        else limit + stop_buffer_atr * a)
             risk = abs(stop - limit)
             if risk <= 0:
                 continue
@@ -688,8 +728,9 @@ def collect_fade_trades(
             armed[key] = False
 
             # 反対側(利益方向)の帯。往復を刈るときの手仕舞い先。
+            # **抜けた側に乗る場合は損失方向なので使わない。**
             opposite = None
-            if exit_at_opposite_zone:
+            if exit_at_opposite_zone and not take_break:
                 # **利益方向にあり、かつ指値より手前で決済になる帯だけ**を
                 # 反対側とみなす。ここを緩めると、決済価格が損切りより
                 # 悪い帯を掴む。実測では負けの半分がそれで、平均 -3.78 R、
@@ -711,7 +752,7 @@ def collect_fade_trades(
                     # 向こう側へ回り込み、-35 R の「利確」が発生していた。
                     opposite = picked.high if from_below else picked.low
 
-            sign = -1.0 if from_below else 1.0
+            sign = 1.0 if long_side else -1.0
             # **約定した足そのものから見る。**その足の残りで損切りまで
             # 走ることは普通にある。翌足から数えると、いちばん不利な
             # 場面だけを見逃して成績が良く出る。
@@ -725,8 +766,8 @@ def collect_fade_trades(
             held = horizon
             result = 0.0
             # 売り(下から来た)なら損切りが上・反対側の帯が下。買いは鏡像。
-            up = stop if from_below else opposite
-            down = opposite if from_below else stop
+            up = opposite if long_side else stop
+            down = stop if long_side else opposite
             for step, c in enumerate(forward):
                 fav = max((c.high - limit) * sign, (c.low - limit) * sign)
                 adv = -min((c.high - limit) * sign, (c.low - limit) * sign)
@@ -735,13 +776,13 @@ def collect_fade_trades(
                 if intrabar in ("stop_first", "no_same_bar_profit"):
                     # 損切りは高安で判定する。同じ足で有利にも動いていても、
                     # 順序が分からない以上こちらを先に見る。
-                    touched = (c.high >= stop) if from_below else (c.low <= stop)
+                    touched = (c.low <= stop) if long_side else (c.high >= stop)
                     first = "stop" if touched else None
                     if first is None and opposite is not None and (
                         intrabar == "stop_first" or step > 0
                     ):
-                        reached = ((c.low <= opposite) if from_below
-                                   else (c.high >= opposite))
+                        reached = ((c.high >= opposite) if long_side
+                                   else (c.low <= opposite))
                         first = "opp" if reached else None
                 else:
                     points = bar_points(fill_at + step)
@@ -755,7 +796,7 @@ def collect_fade_trades(
                         points = [forward[step - 1].close, *points]
                     side = _reach(points, up, down)
                     first = None
-                    if side == ("up" if from_below else "down"):
+                    if side == ("down" if long_side else "up"):
                         first = "stop"
                     elif side is not None:
                         first = "opp"
@@ -791,6 +832,7 @@ def collect_fade_trades(
                     max_adverse_r=worst / risk,
                     hit_stop=hit_stop,
                     bars_held=held,
+                    long_side=long_side,
                     entry_hour=candles[fill_at].time.hour,
                     why=why, exit_price=exit_price,
                     fill_index=fill_at,

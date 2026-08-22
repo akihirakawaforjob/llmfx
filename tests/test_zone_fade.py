@@ -726,3 +726,71 @@ def test_the_window_only_keeps_recent_turns():
     span = lambda ts: sum(abs(t.opposite_price - t.entry) / t.atr
                           for t in ts if t.opposite_price) / len(ts)
     assert span(long_) > span(short), (span(short), span(long_))
+
+
+# --- 帯が示した方に乗る ---------------------------------------------------
+
+
+def test_the_break_side_takes_the_opposite_direction():
+    """利用者の説明: 弾かれたら跳ね返りに乗り、抜けたら抜けた側に乗る。
+
+    上の端へ **下から** 来た場合、跳ね返りに乗るなら売り、抜けた側に
+    乗るなら買い。`from_below` だけでは向きが決まらない。
+    """
+    common = dict(stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
+                  zone_source="range", range_bars=100, entry_at_zone_extreme=True)
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    fade = collect_fade_trades(candles, **common, edge_mode="fade")
+    brk = collect_fade_trades(candles, **common, edge_mode="break")
+    assert fade and brk
+    for t in fade:
+        assert t.long_side is not t.from_below, t
+    for t in brk:
+        assert t.long_side is t.from_below, t
+
+
+def test_the_break_side_puts_the_stop_back_inside_the_range():
+    """抜けた側に乗るなら、損切りは帯の内側へ戻る。"""
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    brk = collect_fade_trades(
+        candles, stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
+        zone_source="range", range_bars=100, entry_at_zone_extreme=True,
+        edge_mode="break")
+    assert brk
+    for t in brk:
+        if t.long_side:
+            assert t.stop < t.entry, t
+        else:
+            assert t.stop > t.entry, t
+
+
+def test_the_break_side_never_targets_the_opposite_edge():
+    """反対側の端は損失方向。決済先にしてはいけない。"""
+    brk = collect_fade_trades(
+        generate_synthetic_candles(count=20_000, seed=5),
+        stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
+        zone_source="range", range_bars=100, entry_at_zone_extreme=True,
+        edge_mode="break", exit_at_opposite_zone=True)
+    assert brk
+    assert all(t.opposite_price == 0.0 for t in brk)
+    assert not [t for t in brk if t.why == "opp"]
+
+
+def test_auto_picks_the_break_side_only_when_defenders_are_losing():
+    """守り手が押し負けていれば抜けた側、そうでなければ跳ね返り側。
+
+    利用者の指摘: 安値切り上げは見送る材料ではなく、
+    **むしろエントリーすべきサイン**。
+    """
+    common = dict(stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
+                  zone_source="range", range_bars=100, entry_at_zone_extreme=True)
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    auto = collect_fade_trades(candles, **common, edge_mode="auto")
+    assert auto
+    kinds = {t.long_side is t.from_below for t in auto}
+    assert kinds == {True, False}, "自動なのに片側しか出ていない"
+
+
+def test_an_unknown_edge_mode_is_refused():
+    with pytest.raises(ValueError):
+        trades(horizon=24, edge_mode="whatever")
