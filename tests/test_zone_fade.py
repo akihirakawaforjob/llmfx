@@ -352,3 +352,22 @@ def test_every_mechanism_can_be_switched_independently():
     ):
         got = trades(horizon=24, **kwargs)
         assert got, kwargs
+
+
+# --- 薄い時間帯を避ける ---------------------------------------------------
+
+
+def test_blocked_hours_produce_no_fills_in_those_hours():
+    """スプレッドが数倍に開く時間帯では建玉を持たない。"""
+    got = trades(horizon=24, exit_at_opposite_zone=True,
+                 blocked_hours_utc=frozenset({21, 22}))
+    assert got
+    assert not [t for t in got if t.entry_hour in (21, 22)]
+
+
+def test_every_trade_records_the_hour_it_filled():
+    """時間帯ごとのコストを後から評価するのに要る。"""
+    got = trades(horizon=24)
+    assert got
+    assert all(0 <= t.entry_hour <= 23 for t in got)
+    assert len({t.entry_hour for t in got}) > 1, "1 つの時刻に偏っている"

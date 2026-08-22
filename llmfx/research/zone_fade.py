@@ -121,6 +121,8 @@ class FadeTrade:
     max_adverse_r: float
     hit_stop: bool
     bars_held: int
+    entry_hour: int = 0
+    """約定した足の UTC 時。スプレッドが開く時間帯を後から評価するのに使う。"""
 
 
 def collect_fade_trades(
@@ -142,6 +144,7 @@ def collect_fade_trades(
     require_range: bool = False,
     max_range_atr: float | None = None,
     exit_at_opposite_zone: bool = False,
+    blocked_hours_utc: frozenset[int] | None = None,
     skip_break_risk: bool = False,
     entry_from_range_bars: int | None = None,
     stop_from_range_bars: int | None = None,
@@ -202,6 +205,16 @@ def collect_fade_trades(
     注意: 反対側で切ると、**そのまま抜けて走る場合の裾も切る**。
     利用者は「反対側を抜けてそのまま走ったら全部が取り分」と言っている
     ので、ここは掃引して確かめる軸であって、既定では入れない。
+
+    `blocked_hours_utc` はその UTC 時に **建玉を持たない**。
+
+    実勢のスプレッドは時間帯で数倍に開く。とくに NY 17 時のロールオーバー
+    (UTC 21-22 時、日本の早朝)は薄く、平常時の数倍になる。固定 pips で
+    測ると、この時間帯の取引だけコストを大幅に過小評価する。
+
+    **どの時間が薄いかは板の仕組みから事前に分かる。**成績を見てから
+    悪い時間を外すのは選択バイアスだが、ロールオーバーを外すのは
+    先読みにならない。
 
     `require_range` は **上下 2 本の帯が揃っているときだけ**建玉を持つ。
     こちらは能力ではなく絞り込み。既定では掛けない。
@@ -346,6 +359,8 @@ def collect_fade_trades(
             fill_at = None
             for j in range(i, min(i + max_wait_bars, len(candles))):
                 c = candles[j]
+                if blocked_hours_utc and c.time.hour in blocked_hours_utc:
+                    continue
                 if (c.high >= limit) if from_below else (c.low <= limit):
                     fill_at = j
                     break
@@ -416,6 +431,7 @@ def collect_fade_trades(
                     max_adverse_r=worst / risk,
                     hit_stop=hit_stop,
                     bars_held=held,
+                    entry_hour=candles[fill_at].time.hour,
                 )
             )
             busy_until = fill_at + held   # 同時に 1 建玉。決済したら次を張れる
