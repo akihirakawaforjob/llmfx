@@ -178,6 +178,13 @@ class RangeEdge:
     edge_key: str
     count: int = 0
     touches: tuple = ()
+    arena: float = 0.0
+    """大枠(1 週間の最値)。指値は直近の折り目へ寄せても、往復を刈る
+    ときの相手はこちらを見る。利用者の指定:
+
+        大枠は 1 週間で良いが、その後のエントリーは必ず直近の折り目で
+        微調整していかないとエントリー数も稼げないし勿体ない。
+    """
 
     @property
     def price(self) -> float:
@@ -271,6 +278,7 @@ def collect_fade_trades(
     zone_source: str = "pivots",
     range_bars: int = 120,
     range_needs_turn: bool = True,
+    entry_from_recent_turn: bool = False,
     edge_mode: str = "fade",
     break_confirm: str = "touch",
     break_confirm_atr: float = 0.0,
@@ -404,6 +412,15 @@ def collect_fade_trades(
 
     `close` は確認を待つぶん値段が悪くなるが、**触っただけで反転する形
     (跳ね返り側が狙っているまさにその形)を拾わずに済む**。
+
+    `entry_from_recent_turn` は **指値を直近の折り目へ寄せる**。大枠(1 週間の
+    最値)はそのまま残り、往復を刈るときの相手として使う。利用者の指定:
+
+        大枠は 1 週間で良いが、その後のエントリーは必ず直近の折り目で
+        微調整していかないとエントリー数も稼げないし勿体ない。
+
+    1 週間の最値は遠いことが多く、そこまで戻ってこないと約定しない。
+    直近の折り目まで寄せると、届く回数が増える。
 
     `drop_broken_edges` は **抜けられた端を捨てる**。利用者の説明:
 
@@ -828,8 +845,17 @@ def collect_fade_trades(
                 (ti, top), (bi, bot) = turn_hi[0], turn_lo[0]
                 if top <= bot:
                     continue
-                cached = [RangeEdge(top, top, "top", 1, (ti,)),
-                          RangeEdge(bot, bot, "bottom", 1, (bi,))]
+                hi_lv, lo_lv = top, bot
+                if entry_from_recent_turn:
+                    # 大枠は残したまま、指値だけ直近の折り目へ寄せる。
+                    rh, rl = swing_state["last_high"], swing_state["last_low"]
+                    if rh is None or rl is None or rh <= rl:
+                        continue
+                    hi_lv, lo_lv = min(top, rh), max(bot, rl)
+                    if hi_lv <= lo_lv:
+                        continue
+                cached = [RangeEdge(hi_lv, hi_lv, "top", 1, (ti,), top),
+                          RangeEdge(lo_lv, lo_lv, "bottom", 1, (bi,), bot)]
             else:
                 if edge_high is None or edge_high[k] <= edge_low[k]:
                     continue
@@ -1020,18 +1046,24 @@ def collect_fade_trades(
                 for z in cached:
                     if z is zone:
                         continue
-                    edge = z.high if from_below else z.low
+                    # 往復の相手は **大枠** の端(あれば)。指値だけ折り目へ
+                    # 寄せているので、利確まで折り目にすると幅が消える。
+                    arena = getattr(z, "arena", 0.0)
+                    edge = (z.high if from_below else z.low) if not arena else arena
                     gain = (limit - edge) if from_below else (edge - limit)
                     if gain > 0:
                         other.append(z)
                 if other:
-                    picked = (max(other, key=lambda z: z.high) if from_below
-                              else min(other, key=lambda z: z.low))
+                    lvl = lambda z: getattr(z, "arena", 0.0) or (
+                        z.high if from_below else z.low)
+                    picked = (max(other, key=lvl) if from_below
+                              else min(other, key=lvl))
                     # **縁の値をここで確定させる。**Zone は接触が足される
                     # たびに low/high が広がるので、参照のまま持つと決済
                     # 判定の時点で縁が動いている。実測ではそれで縁が指値の
                     # 向こう側へ回り込み、-35 R の「利確」が発生していた。
-                    opposite = picked.high if from_below else picked.low
+                    opposite = (getattr(picked, "arena", 0.0)
+                                or (picked.high if from_below else picked.low))
 
             t = _run_position(
                 i=i, fill_at=fill_at, limit=limit, stop=stop, risk=risk,

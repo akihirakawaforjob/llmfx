@@ -1038,3 +1038,60 @@ def test_the_break_is_judged_on_the_bar_the_zone_was_drawn_on():
     with_h = collect_fade_trades(candles, **common, higher_minutes=60)
     without = collect_fade_trades(candles, **common)
     assert with_h and without
+
+
+def test_the_limit_can_be_tuned_to_the_most_recent_fold():
+    """利用者の指定:
+
+        大枠は 1 週間で良いが、その後のエントリーは必ず直近の折り目で
+        微調整していかないとエントリー数も稼げないし勿体ない。
+
+    1 週間の最値は遠いことが多く、そこまで戻ってこないと約定しない。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  higher_minutes=60, zone_source="range", range_bars=120,
+                  entry_at_zone_extreme=True, edge_mode="fade",
+                  exit_at_opposite_zone=True, max_open=4)
+    window = collect_fade_trades(candles, **common, entry_from_recent_turn=False)
+    fold = collect_fade_trades(candles, **common, entry_from_recent_turn=True)
+    assert window and fold
+    assert len(fold) > len(window) * 1.4, (len(window), len(fold))
+
+
+def test_the_fold_never_sits_outside_the_weekly_frame():
+    """折り目へ寄せるのは **内側** へだけ。大枠より外には出ない。"""
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    fold = collect_fade_trades(
+        candles, stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+        higher_minutes=60, zone_source="range", range_bars=120,
+        entry_at_zone_extreme=True, edge_mode="fade", exit_at_opposite_zone=True,
+        max_open=4, entry_from_recent_turn=True)
+    assert fold
+    for t in fold:
+        if not t.opposite_price:
+            continue
+        # 反対側の相手は大枠なので、指値より必ず遠い
+        gap = ((t.entry - t.opposite_price) if t.from_below
+               else (t.opposite_price - t.entry))
+        assert gap > 0, t
+
+
+def test_the_round_trip_target_stays_on_the_weekly_frame():
+    """指値だけ折り目へ寄せ、往復の相手は大枠のまま。
+
+    利確まで折り目にすると、取りに行く幅が消えてしまう。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  higher_minutes=60, zone_source="range", range_bars=120,
+                  entry_at_zone_extreme=True, edge_mode="fade",
+                  exit_at_opposite_zone=True, max_open=4)
+    window = collect_fade_trades(candles, **common, entry_from_recent_turn=False)
+    fold = collect_fade_trades(candles, **common, entry_from_recent_turn=True)
+    span = lambda ts: sorted(abs(t.opposite_price - t.entry) / t.atr
+                             for t in ts if t.opposite_price)
+    a, b = span(window), span(fold)
+    assert a and b
+    # 折り目へ寄せたぶん、指値から大枠までは **遠くなる**
+    assert b[len(b) // 2] > a[len(a) // 2] * 0.9, (a[len(a)//2], b[len(b)//2])
