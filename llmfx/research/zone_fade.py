@@ -212,6 +212,12 @@ class FadeTrade:
     long_side: bool = False
     """True なら買い。跳ね返りに乗るか抜けた側に乗るかで逆になるので、
     `from_below` だけでは向きが決まらない。"""
+    defenders_weak: bool = False
+    """建玉を持った時点で、帯の守り手が押し負けていたか。
+
+    抵抗帯なら「安値が切り上がっている」。利用者はこれを
+    **エントリーすべきサイン**だと言っている。選別に効いているかを
+    後から分けて数えるために残す。"""
     entry_hour: int = 0
     """約定した足の UTC 時。スプレッドが開く時間帯を後から評価するのに使う。"""
     why: str = ""
@@ -833,6 +839,7 @@ def collect_fade_trades(
                     hit_stop=hit_stop,
                     bars_held=held,
                     long_side=long_side,
+                    defenders_weak=weakening,
                     entry_hour=candles[fill_at].time.hour,
                     why=why, exit_price=exit_price,
                     fill_index=fill_at,
