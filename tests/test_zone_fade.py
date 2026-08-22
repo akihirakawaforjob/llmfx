@@ -1096,3 +1096,59 @@ def test_the_round_trip_target_stays_on_the_weekly_frame():
     # 指値が内側へ寄るぶん、**反対側の大枠までは近くなる**。
     # 取りに行く幅は減るが、相手は大枠のままなので折り目より遠い。
     assert b[len(b) // 2] < a[len(a) // 2], (a[len(a) // 2], b[len(b) // 2])
+
+
+def test_a_broken_cluster_zone_rests_until_it_turns_there_again():
+    """抜けられた帯は **消す** のではなく **休ませる**。
+
+    役割が入れ替わって効き直すことはあるが、抜けられた直後に同じ指値を
+    残すと、戻ってきた勢いで約定して壊される(利用者の言う「お残り」)。
+    もう一度そこで折り返したら、また使う。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  higher_minutes=60, zone_source="pivots", tolerance_atr=1.2,
+                  max_age_bars=120, entry_at_zone_extreme=True, edge_mode="fade",
+                  exit_at_opposite_zone=True, max_open=4, min_touches=2)
+    keep = collect_fade_trades(candles, **common, drop_broken_edges=False)
+    rest = collect_fade_trades(candles, **common, drop_broken_edges=True)
+    assert keep and rest
+    assert len(rest) < len(keep), (len(keep), len(rest))
+
+
+def test_entering_from_the_third_arrival_needs_two_prior_turns():
+    """利用者の基準:
+
+        同じ位置で折り返してから指値でエントリーと言う僕の基準を考えると、
+        **抵抗帯の 3 回目からエントリー** するのが自分の中のルールの様だ。
+
+    確定した折り返しが 2 回あって、いま来ているのが 3 回目。
+    `min_touches` は **確定済みの折り返しの数** なので 2 が「3 回目から」。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  higher_minutes=60, zone_source="pivots", tolerance_atr=1.2,
+                  max_age_bars=120, entry_at_zone_extreme=True, edge_mode="fade",
+                  exit_at_opposite_zone=True, max_open=4)
+    third = collect_fade_trades(candles, **common, min_touches=2)
+    fourth = collect_fade_trades(candles, **common, min_touches=3)
+    assert third and fourth
+    assert all(t.touches >= 2 for t in third)
+    assert all(t.touches >= 3 for t in fourth)
+    assert len(fourth) < len(third)
+
+
+def test_the_range_edge_only_needs_one_turn():
+    """**1 週間の端は折り返し 1 回で線になる。**つまり 2 回目で入っている。
+
+    利用者の基準(3 回目から)とはここがずれる。塊で作る帯に戻すと
+    「2 回折り返してから」を要求できる。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    edge = collect_fade_trades(
+        candles, stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+        higher_minutes=60, zone_source="range", range_bars=120,
+        entry_at_zone_extreme=True, edge_mode="fade", exit_at_opposite_zone=True,
+        max_open=4)
+    assert edge
+    assert all(t.touches <= 1 for t in edge)

@@ -663,6 +663,7 @@ def collect_fade_trades(
     trades: list[FadeTrade] = []
     armed: dict[int, bool] = {}
     open_until: list[int] = []   # 建玉が空くまでの足番号。max_open まで持てる
+    dead_zones: dict[int, int] = {}   # 抜けられた帯 -> 抜けられた足番号
     was_rising = was_falling = False
     cached: list = []
     cached_swings = -1
@@ -909,6 +910,21 @@ def collect_fade_trades(
 
         # 上下 2 本の帯が揃っているときだけ触る(利用者の言う「レンジ」)。
         # 片側だけで張ると、そこを抜けられたときに一方的に負ける。
+        if drop_broken_edges and zone_source == "pivots":
+            # **抜けられた帯は、そこでもう一度折り返すまで使わない。**
+            # 消すのではなく休ませる。役割が入れ替わって効き直すことは
+            # あるが、抜けられた直後に同じ指値を残すと、戻ってきた勢いで
+            # 約定して壊される(利用者の言う「お残り」)。
+            for z in cached:
+                kz = id(z)
+                if candle.close > z.high or candle.close < z.low:
+                    dead_zones[kz] = age_index
+            cached = [z for z in cached
+                      if max((sw.index for sw in z.touches), default=-1)
+                      > dead_zones.get(id(z), -1)]
+            if not cached:
+                continue
+
         usable = cached
         if require_range:
             price = candle.close
