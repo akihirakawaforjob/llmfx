@@ -612,7 +612,7 @@ def test_range_edges_are_the_window_high_and_low():
     got = collect_fade_trades(
         candles, stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
         exit_at_opposite_zone=True, zone_source="range", range_bars=100,
-        entry_at_zone_extreme=True)
+        range_needs_turn=False, entry_at_zone_extreme=True)
     assert got
     for t in got[:200]:
         window = candles[max(0, t.bar_index - 100):t.bar_index]
@@ -628,7 +628,7 @@ def test_the_range_edge_never_uses_the_current_bar():
     got = collect_fade_trades(
         candles, stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
         exit_at_opposite_zone=True, zone_source="range", range_bars=100,
-        entry_at_zone_extreme=True)
+        range_needs_turn=False, entry_at_zone_extreme=True)
     for t in got[:200]:
         c = candles[t.bar_index]
         if t.from_below:
@@ -666,3 +666,63 @@ def test_range_edges_and_pivot_zones_are_different_places():
 def test_an_unknown_zone_source_is_refused():
     with pytest.raises(ValueError):
         trades(horizon=24, zone_source="whatever")
+
+
+def test_the_edge_must_be_a_place_price_turned():
+    """**いまの動きの端には線を引かない。**折り返した最値だけを使う。
+
+    利用者の説明: 5 分足の下を書かなかったのは、はっきりと直近底値の
+    折り返しかわからなかったから。上昇の途中の起点は帯ではない。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
+                  exit_at_opposite_zone=True, zone_source="range",
+                  range_bars=100, entry_at_zone_extreme=True)
+    turn = collect_fade_trades(candles, **common, range_needs_turn=True)
+    raw = collect_fade_trades(candles, **common, range_needs_turn=False)
+    assert turn and raw
+    assert {t.entry for t in turn} != {t.entry for t in raw}
+    # 折り返し済みの最値は、窓の最値と同じかその内側に来る
+    for t in turn[:150]:
+        window = candles[max(0, t.bar_index - 100):t.bar_index]
+        if t.from_below:
+            assert t.entry <= max(c.high for c in window) + 1e-9, t
+        else:
+            assert t.entry >= min(c.low for c in window) - 1e-9, t
+
+
+def test_the_turning_edge_is_a_confirmed_swing():
+    """線を引く場所は確定したスイング。未確定を使うと先読みになる。"""
+    from llmfx.domain.swings import SwingDetector
+
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    got = collect_fade_trades(
+        candles, stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
+        exit_at_opposite_zone=True, zone_source="range", range_bars=100,
+        range_needs_turn=True, entry_at_zone_extreme=True)
+    # **その時点で存在したスイングを集める。**検出器は同じ向きが続くと
+    # 末尾を置き換えるので、最後まで回した列には残っていないものがある。
+    det = SwingDetector(left=3, right=3, atr_period=14, min_swing_atr=0.6)
+    prices, seen = set(), 0
+    for c in candles:
+        det.update(c)
+        # 1 回の更新で 2 つ確定することがあり、末尾だけでは取りこぼす。
+        for sw in det.swings[max(0, seen - 1):]:
+            prices.add(round(sw.price, 8))
+        seen = len(det.swings)
+    for t in got[:150]:
+        assert round(t.entry, 8) in prices, t
+
+
+def test_the_window_only_keeps_recent_turns():
+    """**何年も前の抵抗帯に意味はない。**窓から外れた折り返しは使わない。"""
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=0.75, max_wait_bars=12, horizon=24,
+                  exit_at_opposite_zone=True, zone_source="range",
+                  range_needs_turn=True, entry_at_zone_extreme=True)
+    short = collect_fade_trades(candles, **common, range_bars=60)
+    long_ = collect_fade_trades(candles, **common, range_bars=600)
+    assert short and long_
+    span = lambda ts: sum(abs(t.opposite_price - t.entry) / t.atr
+                          for t in ts if t.opposite_price) / len(ts)
+    assert span(long_) > span(short), (span(short), span(long_))

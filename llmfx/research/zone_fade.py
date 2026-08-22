@@ -261,6 +261,7 @@ def collect_fade_trades(
     entry_at_zone_extreme: bool = False,
     zone_source: str = "pivots",
     range_bars: int = 120,
+    range_needs_turn: bool = True,
     entry_beyond_atr: float = 0.0,
     warmup: int = 200,
     refresh_every: int = 50,
@@ -311,6 +312,17 @@ def collect_fade_trades(
     | --- | --- |
     | `pivots` | 確定スイングを ATR 0.5 でまとめた塊。2 回以上試された水準 |
     | `range` | **直近 `range_bars` 本の最高値と最安値**。上端と下端の 2 本 |
+
+    `range_needs_turn`(既定 True)は、その最値が **折り返した場所である
+    こと**を要求する。利用者の説明:
+
+        5 分足の下を書かなかったのは、左側があまり良く見えず、はっきりと
+        直近底値の折り返しかわからなかったからだ。
+
+    上昇の途中の起点(まだ折り返していない、いまの動きの端)には線を
+    引かない。実装は「窓の中で **確定したスイング** のうち最も高いもの /
+    最も安いもの」。確定には左右 N 本が要るので、いまの動きの端は
+    自動的に外れる。False なら折り返しを問わず窓の最値そのもの。
 
     `range` は利用者が実際に線を引く場所。5 分足・15 分足・1 時間足の
     3 枚を見せてもらったところ、線はどれも **その足で表示されている窓の
@@ -438,11 +450,27 @@ def collect_fade_trades(
     entry_high, entry_low = _rolling_extremes(candles, entry_from_range_bars)
     if zone_source not in ("pivots", "range"):
         raise ValueError(f"zone_source が不正: {zone_source!r}")
-    if zone_source == "range":
+    if zone_source == "range" and not range_needs_turn:
         edge_high, edge_low = _rolling_extremes(
             higher if higher is not None else candles, range_bars)
     else:
         edge_high = edge_low = None
+    # 折り返し済みの最値。確定スイングを単調デックで持つ(窓を毎回
+    # 舐めると足数 x スイング数になり、22 万足では実用にならない)。
+    from collections import deque as _deque
+
+    turn_hi: _deque = _deque()
+    turn_lo: _deque = _deque()
+
+    def absorb_turn(sw) -> None:
+        if sw.type is SwingType.HIGH:
+            while turn_hi and turn_hi[-1][1] <= sw.price:
+                turn_hi.pop()
+            turn_hi.append((sw.index, sw.price))
+        else:
+            while turn_lo and turn_lo[-1][1] >= sw.price:
+                turn_lo.pop()
+            turn_lo.append((sw.index, sw.price))
     if higher is not None and scale_to_zone_timeframe:
         roll_high_h, roll_low_h = _rolling_extremes(higher, stop_from_range_bars)
         entry_high_h, entry_low_h = _rolling_extremes(higher, entry_from_range_bars)
@@ -496,7 +524,14 @@ def collect_fade_trades(
                 hi_bar = hi_i
                 for swing in detector.swings[seen_swings:]:
                     tracker.update(swing, atr=atr_high[hi_i], bar_index=hi_bar)
+                    absorb_turn(swing)
                 seen_swings = len(detector.swings)
+                if detector.swings:
+                    # **差分だけでは足りない。**同じ向きが続くと検出器は
+                    # 末尾を「より極端な方」で **置き換える** ので、
+                    # 列の長さが伸びない。折り返しの最値を追うには、
+                    # 末尾を毎回入れ直す必要がある。
+                    absorb_turn(detector.swings[-1])
                 hi_i += 1
             # **帯を引いた足の物差しで測る。**下位足の ATR で上位足の帯を
             # 測ると、幅の上限も損切りの余裕も小さすぎて別物になる。
@@ -507,7 +542,10 @@ def collect_fade_trades(
             a = detector.atr or 0.0
             for swing in detector.swings[seen_swings:]:
                 tracker.update(swing, atr=a, bar_index=i)
+                absorb_turn(swing)
             seen_swings = len(detector.swings)
+            if detector.swings:
+                absorb_turn(detector.swings[-1])
         atr_at.append(a)
 
         if i < warmup or a <= 0 or i + max_wait_bars + horizon >= len(candles):
@@ -525,10 +563,26 @@ def collect_fade_trades(
         if zone_source == "range":
             # 映っている範囲の端。**閉じた足まで**で作る(先読みを避ける)。
             k = hi_bar if higher is not None else i - 1
-            if k < 0 or edge_high is None or edge_high[k] <= edge_low[k]:
+            if k < 0:
                 continue
-            cached = [RangeEdge(edge_high[k], edge_high[k], "top"),
-                      RangeEdge(edge_low[k], edge_low[k], "bottom")]
+            if range_needs_turn:
+                cut = k - range_bars
+                while turn_hi and turn_hi[0][0] < cut:
+                    turn_hi.popleft()
+                while turn_lo and turn_lo[0][0] < cut:
+                    turn_lo.popleft()
+                if not turn_hi or not turn_lo:
+                    continue
+                (ti, top), (bi, bot) = turn_hi[0], turn_lo[0]
+                if top <= bot:
+                    continue
+                cached = [RangeEdge(top, top, "top", 1, (ti,)),
+                          RangeEdge(bot, bot, "bottom", 1, (bi,))]
+            else:
+                if edge_high is None or edge_high[k] <= edge_low[k]:
+                    continue
+                cached = [RangeEdge(edge_high[k], edge_high[k], "top"),
+                          RangeEdge(edge_low[k], edge_low[k], "bottom")]
         elif seen_swings != cached_swings or i - cached_at >= refresh_every:
             cached = tracker.zones(bar_index=age_index, min_touches=min_touches)
             cached_swings, cached_at = seen_swings, i
@@ -742,7 +796,10 @@ def collect_fade_trades(
                     fill_index=fill_at,
                     opposite_price=opposite if opposite is not None else 0.0,
                     zone_low=zone.low, zone_high=zone.high,
-                    zone_touch_bars=tuple(sw.index for sw in zone.touches),
+                    # `Zone` は Swing の列、`RangeEdge` は足番号そのもの。
+                    zone_touch_bars=tuple(
+                        sw if isinstance(sw, int) else sw.index
+                        for sw in zone.touches),
                 )
             )
             busy_until = fill_at + held   # 同時に 1 建玉。決済したら次を張れる
