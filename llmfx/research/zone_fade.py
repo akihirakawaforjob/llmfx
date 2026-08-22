@@ -113,6 +113,53 @@ def _rolling_extremes(
     return highs, lows
 
 
+def _bar_path(c: Candle) -> tuple[float, float, float, float]:
+    """1 本の足の中を、四本値から推し量った順に並べる。
+
+    陽線は 始値 → 安値 → 高値 → 終値、陰線は 始値 → 高値 → 安値 → 終値。
+    値動きは一度どちらかへ振ってから逆へ抜ける、という最も普通の読み。
+    **推測であって事実ではない。**細かい足があるならそちらを使う。
+    """
+    if c.close >= c.open:
+        return (c.open, c.low, c.high, c.close)
+    return (c.open, c.high, c.low, c.close)
+
+
+def _reach(points: list[float], level_up: float | None,
+           level_down: float | None) -> str | None:
+    """点列を順に辿り、上下どちらの水準へ先に届くかを返す。
+
+    隣り合う 2 点の間は一方向にしか動かないので、片方の区間で上下
+    両方に届くことはない。**順序が分かるのはここだけで、区間の中は
+    やはり分からない。**細かくするほど残る曖昧さが減る。
+    """
+    if level_up is not None and points[0] >= level_up:
+        return "up"
+    if level_down is not None and points[0] <= level_down:
+        return "down"
+    for b in points[1:]:
+        if level_up is not None and b >= level_up:
+            return "up"
+        if level_down is not None and b <= level_down:
+            return "down"
+    return None
+
+
+def _after_fill(points: tuple[float, ...] | list[float], limit: float,
+                from_below: bool) -> list[float] | None:
+    """指値へ届いた瞬間から先の点列。届かなければ None。
+
+    **届く前に通り過ぎた分は数えない。**ここを飛ばすと、約定して
+    いない時間帯の値動きを取り分に数えてしまう。
+    """
+    if (points[0] >= limit) if from_below else (points[0] <= limit):
+        return list(points)          # 始値がすでに越えている(窓開け)
+    for k, b in enumerate(points[1:], start=1):
+        if (b >= limit) if from_below else (b <= limit):
+            return [limit, *points[k:]]
+    return None
+
+
 @dataclass
 class FadeTrade:
     """帯へ置いた指値が約定してからの成果."""
@@ -171,7 +218,8 @@ def collect_fade_trades(
     skip_break_risk: bool = False,
     entry_from_range_bars: int | None = None,
     stop_from_range_bars: int | None = None,
-    same_bar_exit: bool = True,
+    intrabar: str = "stop_first",
+    path_candles: list[Candle] | None = None,
     warmup: int = 200,
     refresh_every: int = 50,
 ) -> list[FadeTrade]:
@@ -230,14 +278,24 @@ def collect_fade_trades(
     利用者は「反対側を抜けてそのまま走ったら全部が取り分」と言っている
     ので、ここは掃引して確かめる軸であって、既定では入れない。
 
-    `same_bar_exit=False` は **約定した足そのものでの利確を認めない**。
+    `intrabar` は **1 本の足の中の道順** をどう扱うか。四本値からは
+    順序が分からないのに、結論はここで決まる。実測(開発用 4 銘柄)で
+    符号が変わった:
 
-    1 本の足の中の道順は四本値からは分からない。約定した足で反対側の帯へ
-    届いていても、実際には「先に安値を付けてから高値を付けた」= 指値に
-    届く前に利確地点を通過していた、かもしれない。既定(True)はこれを
-    こちらに有利な側に解釈している。損切りについては逆に **常に不利な側**
-    (同じ足で両方に触れたら損切りが先)で扱っているので、利確だけが
-    甘い扱いになっている。ここを揃えるとどれだけ減るかを測るための軸。
+        stop_first          +0.096 〜 +0.159 R
+        no_same_bar_profit  -0.145 〜 -0.201 R
+
+    利確の 87.6% が約定した足そのもので起きているため。
+
+    | 値 | 扱い |
+    | --- | --- |
+    | `stop_first` | 高安だけで見る。損切りを先に見て、次に反対側の帯。約定足での利確も認める。**損切りだけ不利側、利確は有利側**という食い違いがある |
+    | `no_same_bar_profit` | 上から、約定足での利確だけを外す。不利側の端 |
+    | `ohlc` | 陽線なら 始値→安値→高値→終値、陰線ならその逆、と推し量って順序を解く。推測 |
+    | `path` | `path_candles`(M1 など細かい足)で順序を解く。**事実に最も近い** |
+
+    `path_candles` は同じ期間を覆う細かい足。`intrabar="path"` のときだけ
+    使う。足りない区間は `ohlc` に落ちる。
 
     `blocked_hours_utc` はその UTC 時に **建玉を持たない**。
 
@@ -284,6 +342,37 @@ def collect_fade_trades(
     # 実測では 48 通りの掃引が 1 銘柄 1 時間を超えた。O(n) で先に作る。
     roll_high, roll_low = _rolling_extremes(candles, stop_from_range_bars)
     entry_high, entry_low = _rolling_extremes(candles, entry_from_range_bars)
+
+    if intrabar not in ("stop_first", "no_same_bar_profit", "ohlc", "path"):
+        raise ValueError(f"intrabar が不正: {intrabar!r}")
+    # 細かい足を M15 の各足へ割り当てる。両方とも時刻順なので 1 度なめれば済む。
+    fine_at: list[tuple[int, int]] | None = None
+    if intrabar == "path":
+        if not path_candles:
+            raise ValueError("intrabar='path' には path_candles が要る")
+        fine_at = []
+        k = 0
+        step = candles[1].time - candles[0].time if len(candles) > 1 else None
+        for c in candles:
+            end = c.time + step if step else c.time
+            while k < len(path_candles) and path_candles[k].time < c.time:
+                k += 1
+            j = k
+            while j < len(path_candles) and path_candles[j].time < end:
+                j += 1
+            fine_at.append((k, j))
+            k = j
+
+    def bar_points(idx: int) -> list[float]:
+        """その足の中を辿る点列。細かい足があればそれを繋ぐ。"""
+        if fine_at is not None:
+            lo, hi = fine_at[idx]
+            if hi > lo:
+                out: list[float] = []
+                for f in path_candles[lo:hi]:
+                    out.extend(_bar_path(f))
+                return out
+        return list(_bar_path(candles[idx]))
 
     atr_at: list[float] = []
     seen_swings = 0
@@ -446,28 +535,53 @@ def collect_fade_trades(
             hit_stop = False
             held = horizon
             result = 0.0
+            # 売り(下から来た)なら損切りが上・反対側の帯が下。買いは鏡像。
+            up = stop if from_below else opposite
+            down = opposite if from_below else stop
             for step, c in enumerate(forward):
                 fav = max((c.high - limit) * sign, (c.low - limit) * sign)
                 adv = -min((c.high - limit) * sign, (c.low - limit) * sign)
                 best = max(best, fav)
                 worst = max(worst, adv)
-                # 損切りは高安で判定する。同じ足で有利にも動いていても、
-                # 順序が分からない以上こちらを先に見る。
-                touched = (c.high >= stop) if from_below else (c.low <= stop)
-                if touched:
+                if intrabar in ("stop_first", "no_same_bar_profit"):
+                    # 損切りは高安で判定する。同じ足で有利にも動いていても、
+                    # 順序が分からない以上こちらを先に見る。
+                    touched = (c.high >= stop) if from_below else (c.low <= stop)
+                    first = "stop" if touched else None
+                    if first is None and opposite is not None and (
+                        intrabar == "stop_first" or step > 0
+                    ):
+                        reached = ((c.low <= opposite) if from_below
+                                   else (c.high >= opposite))
+                        first = "opp" if reached else None
+                else:
+                    points = bar_points(fill_at + step)
+                    if step == 0:
+                        # **指値へ届いた瞬間から先だけを見る。**
+                        after = _after_fill(points, limit, from_below)
+                        if after is None:      # 細かい足に無い(隙間)
+                            after = [limit]
+                        points = after
+                    else:
+                        points = [forward[step - 1].close, *points]
+                    side = _reach(points, up, down)
+                    first = None
+                    if side == ("up" if from_below else "down"):
+                        first = "stop"
+                    elif side is not None:
+                        first = "opp"
+                if first == "stop":
                     hit_stop = True
                     held = step
                     result = -1.0
                     why, exit_price = "stop", stop
                     break
-                if opposite is not None and (same_bar_exit or step > 0):
+                if first == "opp":
                     # 反対側の帯の **手前の縁**(建玉を持った時点の値)で手仕舞う。
-                    reached = (c.low <= opposite) if from_below else (c.high >= opposite)
-                    if reached:
-                        held = step
-                        result = (opposite - limit) * sign / risk
-                        why, exit_price = "opp", opposite
-                        break
+                    held = step
+                    result = (opposite - limit) * sign / risk
+                    why, exit_price = "opp", opposite
+                    break
             if not hit_stop and why == "time":
                 result = (forward[-1].close - limit) * sign / risk
                 exit_price = forward[-1].close

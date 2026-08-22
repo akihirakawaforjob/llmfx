@@ -424,7 +424,22 @@ def _cmd_data_fetch_histdata(args: argparse.Namespace) -> int:
         bars: list = []
         carry: list = []
         dropped = 0
+        written = 0
+        span: list = []
         first_error: str | None = None
+        if target.exists():
+            target.unlink()
+
+        def flush() -> None:
+            """取れた分をその都度書き出す。**M1 を全部抱えるとメモリが尽きる。**"""
+            nonlocal bars, written
+            if not bars:
+                return
+            if not span:
+                span.append(bars[0].time)
+            span[1:] = [bars[-1].time]
+            written += save_candles_csv(bars, target, append=True)
+            bars = []
 
         def absorb(m1: list) -> None:
             nonlocal carry, dropped
@@ -458,18 +473,19 @@ def _cmd_data_fetch_histdata(args: argparse.Namespace) -> int:
 
         for year in range(args.from_year, args.to_year):
             take(lambda y=year: histdata_source.download_year(symbol, y))
+            flush()
         for month in range(1, 13):
             take(lambda m=month: histdata_source.download_month(symbol, args.to_year, m))
+            flush()
 
-        if not bars:
+        if not written:
             print(f"{symbol}: 取得できず — {first_error}", file=sys.stderr)
             failures += 1
             continue
-        written = save_candles_csv(bars, target)
         note = f"、除去 {dropped:,} 本" if dropped else ""
         print(
             f"{symbol}: {args.granularity} {written:,} 本"
-            f"({bars[0].time:%Y-%m-%d} 〜 {bars[-1].time:%Y-%m-%d} UTC{note}) -> {target}"
+            f"({span[0]:%Y-%m-%d} 〜 {span[-1]:%Y-%m-%d} UTC{note}) -> {target}"
         )
 
     return 2 if failures == len(args.symbols) else 0

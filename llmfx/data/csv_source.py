@@ -46,13 +46,22 @@ def load_candles_csv(path: str | Path) -> list[Candle]:
     return candles
 
 
-def save_candles_csv(candles: Iterable[Candle], path: str | Path) -> int:
+def save_candles_csv(
+    candles: Iterable[Candle], path: str | Path, *, append: bool = False
+) -> int:
+    """`append=True` なら追記する(見出しは書かない)。
+
+    1 分足は 1 銘柄 26 年で 900 万本を超える。全部抱えてから書くと
+    メモリが尽きるので、取得した年ごとに吐き出せるようにしておく。
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     count = 0
-    with target.open("w", encoding="utf-8", newline="") as handle:
+    mode = "a" if append and target.exists() else "w"
+    with target.open(mode, encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDNAMES)
-        writer.writeheader()
+        if mode == "w":
+            writer.writeheader()
         for candle in candles:
             writer.writerow(
                 {

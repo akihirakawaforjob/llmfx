@@ -454,8 +454,9 @@ def test_the_fill_bar_can_be_excluded_from_taking_profit():
     ここを不利側に倒すと差引 +0.114 R が -0.185 R になる。**符号が変わる。**
     決着には M1 のような細かい足で道順を解く必要がある。
     """
-    same = trades(horizon=24, exit_at_opposite_zone=True, same_bar_exit=True)
-    strict = trades(horizon=24, exit_at_opposite_zone=True, same_bar_exit=False)
+    same = trades(horizon=24, exit_at_opposite_zone=True, intrabar="stop_first")
+    strict = trades(horizon=24, exit_at_opposite_zone=True,
+                    intrabar="no_same_bar_profit")
     assert same and strict
     assert not [t for t in strict if t.why == "opp" and t.bars_held == 0]
     assert [t for t in same if t.why == "opp" and t.bars_held == 0]
@@ -463,5 +464,39 @@ def test_the_fill_bar_can_be_excluded_from_taking_profit():
 
 def test_stops_are_still_taken_on_the_fill_bar_either_way():
     """利確だけを厳しくする。損切りは常に約定足から見る。"""
-    strict = trades(horizon=24, exit_at_opposite_zone=True, same_bar_exit=False)
+    strict = trades(horizon=24, exit_at_opposite_zone=True,
+                    intrabar="no_same_bar_profit")
     assert [t for t in strict if t.why == "stop" and t.bars_held == 0]
+
+
+def test_the_intrabar_path_can_be_resolved_from_finer_candles():
+    """細かい足があるなら、四本値からの推測ではなく順序そのものを使う。
+
+    合成データを M1 として作り、M15 へ集約したものを本体に渡す。
+    `path` は `ohlc` の推測よりも実際の順序に近いので、両者は一致しない。
+    """
+    from llmfx.data.resample import resample_candles
+
+    fine = generate_synthetic_candles(count=60_000, seed=9, granularity="M1")
+    coarse = resample_candles(fine, 15)
+    got = {}
+    for mode in ("stop_first", "ohlc", "path"):
+        got[mode] = collect_fade_trades(
+            coarse, horizon=24, exit_at_opposite_zone=True,
+            intrabar=mode, path_candles=fine if mode == "path" else None,
+        )
+        assert got[mode], mode
+    mean = {k: sum(t.r_multiple for t in v) / len(v) for k, v in got.items()}
+    # 約定足で利確できる分、高安だけで見るほうが必ず甘い側に出る。
+    assert mean["stop_first"] >= mean["path"] - 1e-9, mean
+    assert got["path"] != got["ohlc"], "細かい足を渡しても推測と同じでは意味がない"
+
+
+def test_path_mode_requires_the_finer_candles():
+    with pytest.raises(ValueError):
+        trades(horizon=24, exit_at_opposite_zone=True, intrabar="path")
+
+
+def test_an_unknown_intrabar_mode_is_refused():
+    with pytest.raises(ValueError):
+        trades(horizon=24, intrabar="whatever")
