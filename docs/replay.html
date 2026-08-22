@@ -490,7 +490,7 @@ function ordersOf(bars, z, sw, cfg) {
 // ---- 注文を裏で回す ----
 // 指値を置いた場所・約定した場所・手仕舞った場所にピンを打つため、
 // 再生に合わせて 1 本ずつ判定する。**先の足は一切見ない。**
-const SIM = { at: -1, pair: null, key: "", pend: {}, open: {}, done: [] };
+const SIM = { at: -1, pair: null, key: "", pend: {}, open: {}, done: [], arm: {} };
 const HOLD = 240;   // 手仕舞いまで持つ下位足の本数
 
 function simKey(cfg) { return JSON.stringify(cfg.on) + cfg.zonetf + cfg.src + cfg.win
@@ -500,6 +500,7 @@ function simTo(pair, cfg, to) {
   const key = simKey(cfg);
   if (SIM.pair !== pair || SIM.key !== key || to < SIM.at || to - SIM.at > 600) {
     SIM.pair = pair; SIM.key = key; SIM.pend = {}; SIM.open = {}; SIM.done = [];
+    SIM.arm = {};
     SIM.at = Math.max(300, to - 400);
   }
   const b = PAIRS[pair], tfm = TF[cfg.zonetf];
@@ -516,6 +517,7 @@ function simTo(pair, cfg, to) {
       const px = why === "損切り" ? o.stop : (why === "利確" ? o.arena : c.c);
       const r = (px - o.entry) * (o.long ? 1 : -1) / Math.abs(o.entry - o.stop);
       SIM.done.push({ ...o, exitAt: i, exitPx: px, why, r });
+      SIM.arm[k] = { level: o.entry };   // 離れるまで張り直さない
       delete SIM.open[k];
     }
     // 注文の約定
@@ -540,6 +542,11 @@ function simTo(pair, cfg, to) {
         for (const o of ordersOf(bars, zz, sws, cfg)) {
           const k = o.m + "/" + (o.side || (o.long ? "L" : "S"));
           if (SIM.open[k]) continue;
+          // **同じ水準で何度も張り直さない。**一度そこで切られたら、
+          // 価格が 1 ATR 以上離れるまで置き直さない(Python 側と同じ扱い)。
+          // これが無いと、上げの流れの中で同じ値段を撃ち続ける。
+          const arm = SIM.arm[k];
+          if (arm && Math.abs(c.c - arm.level) < zz.atr) continue;
           SIM.pend[k] = { ...o, placedAt: i, fromAbove: o.level < c.c };
         }
       }

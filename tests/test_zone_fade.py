@@ -1152,3 +1152,53 @@ def test_the_range_edge_only_needs_one_turn():
         max_open=4)
     assert edge
     assert all(t.touches <= 1 for t in edge)
+
+
+# --- 流れに逆らわない / 同じ水準で何度も試さない -------------------------
+
+
+def test_the_fade_is_skipped_against_a_running_trend():
+    """利用者がリプレイ画面で見つけた形:
+
+        高値切り上げ、安値切り下げが始まっているのに、必死にエントリーして
+        往復ビンタを食らっている。
+
+    高値も安値も切り上がっているときは、上の帯で売らない。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  higher_minutes=60, zone_source="range", range_bars=120,
+                  entry_at_zone_extreme=True, edge_mode="fade",
+                  exit_at_opposite_zone=True, max_open=4)
+    plain = collect_fade_trades(candles, **common)
+    filt = collect_fade_trades(candles, **common, skip_against_trend=True)
+    assert plain and filt
+    assert len(filt) < len(plain), (len(plain), len(filt))
+    # **部分集合にはならない。**見送ると建玉の枠が空き、そのぶん別の
+    # 機会を拾うため(時間帯フィルタでも同じ挙動を踏んでいる)。
+    for t in filt:
+        assert not (t.long_side is False and t.from_below is False), t
+
+
+def test_the_same_level_can_be_capped():
+    """同じ折り返しで何度も張り直さない。数えるのは値段ではなく折り返し。"""
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  higher_minutes=60, zone_source="range", range_bars=120,
+                  entry_at_zone_extreme=True, edge_mode="fade",
+                  exit_at_opposite_zone=True, max_open=4)
+    free = collect_fade_trades(candles, **common)
+    once = collect_fade_trades(candles, **common, max_tries_per_zone=1)
+    twice = collect_fade_trades(candles, **common, max_tries_per_zone=2)
+    assert len(once) < len(twice) <= len(free), (len(once), len(twice), len(free))
+
+
+def test_the_trend_filter_leaves_the_break_side_alone():
+    """流れに乗る側は絞らない。逆らう側だけの話。"""
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  higher_minutes=60, zone_source="range", range_bars=120,
+                  entry_at_zone_extreme=True, edge_mode="break", max_open=4)
+    a = collect_fade_trades(candles, **common)
+    b = collect_fade_trades(candles, **common, skip_against_trend=True)
+    assert a and [t.entry for t in a] == [t.entry for t in b]

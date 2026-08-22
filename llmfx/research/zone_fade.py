@@ -286,6 +286,8 @@ def collect_fade_trades(
     arm_within_atr: float = 0.0,
     drop_broken_edges: bool = False,
     min_rejection_atr: float = 0.0,
+    skip_against_trend: bool = False,
+    max_tries_per_zone: int = 0,
     entry_beyond_atr: float = 0.0,
     warmup: int = 200,
     refresh_every: int = 50,
@@ -422,6 +424,20 @@ def collect_fade_trades(
 
     1 週間の最値は遠いことが多く、そこまで戻ってこないと約定しない。
     直近の折り目まで寄せると、届く回数が増える。
+
+    `skip_against_trend` は **流れに逆らう側では張らない**。利用者が
+    リプレイ画面で見つけた形:
+
+        高値切り上げ、安値切り下げが始まっているのに、必死にエントリーして
+        往復ビンタを食らっている。
+
+    高値も安値も切り上がっているとき(上げの流れ)は上の帯で売らない。
+    どちらも切り下がっているときは下の帯で買わない。判定は帯を引いた足の
+    確定スイング 2 本ずつ。`skip_break_risk`(安値だけを見る)より厳しい。
+
+    `max_tries_per_zone` は **同じ帯で何回まで試すか**(0 で無制限)。
+    同じ水準で負け続ける形を止める。数え直すのは、その帯が一度死んで
+    新しく折り返し直したとき。
 
     `min_rejection_atr` は **弾きの強さ** で帯を絞る。利用者の指摘:
 
@@ -677,6 +693,7 @@ def collect_fade_trades(
     armed: dict[int, bool] = {}
     open_until: list[int] = []   # 建玉が空くまでの足番号。max_open まで持てる
     dead_zones: dict[int, int] = {}   # 抜けられた帯 -> 抜けられた足番号
+    tries: dict[int, int] = {}        # 折り返しの足番号 -> 試した回数
     # スイングの足番号 -> 次のスイングまでの値幅(ATR 倍)。弾きの強さ。
     # **次が確定してから入る**ので、先読みにならない。
     swing_move: dict[int, float] = {}
@@ -997,6 +1014,19 @@ def collect_fade_trades(
 
             from_below = candles[i - 1].close < zone.price
 
+            # **流れに逆らう側では張らない。**高値も安値も切り上がって
+            # いるのに上の帯で売ると、同じ水準で何度も刈られる。
+            if skip_against_trend and edge_mode == "fade":
+                st_ = swing_state
+                up = (st_["prev_high"] is not None and st_["prev_low"] is not None
+                      and st_["last_high"] > st_["prev_high"]
+                      and st_["last_low"] > st_["prev_low"])
+                down = (st_["prev_high"] is not None and st_["prev_low"] is not None
+                        and st_["last_high"] < st_["prev_high"]
+                        and st_["last_low"] < st_["prev_low"])
+                if (up and from_below) or (down and not from_below):
+                    continue
+
             # 守り手が押し負けているか。見送る材料にも、抜けた側へ乗る
             # 材料にもなる(利用者は後者だと言っている)。
             weakening = defenders_weakening(detector.swings, from_below, age_index)
@@ -1077,6 +1107,18 @@ def collect_fade_trades(
                 continue
 
             armed[key] = False
+
+            if max_tries_per_zone:
+                # **同じ水準で負け続ける形を止める。**数えるのは水準の値段
+                # ではなく、**その水準を作った折り返し**。帯は少しずつ動くので
+                # 値段で数えると同じものと見なせない。
+                t0 = zone.touches[0] if zone.touches else None
+                tkey = (t0 if isinstance(t0, int)
+                        else (id(zone) if t0 is None else t0.index))
+                n = tries.get(tkey, 0)
+                if n >= max_tries_per_zone:
+                    continue
+                tries[tkey] = n + 1
 
             if take_break:
                 # 抜けた側に乗るなら、損切りは **帯の内側** へ戻る。
