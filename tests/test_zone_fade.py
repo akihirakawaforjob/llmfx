@@ -969,3 +969,72 @@ def test_the_watch_band_does_not_change_where_the_limit_sits():
         gap = (edge - t.entry) if t.from_below else (t.entry - edge)
         assert gap > 0, t          # 端より手前にある
         assert abs(gap - 0.5 * t.atr) < 1e-6, t
+
+
+def test_a_broken_edge_is_dropped_along_with_older_turns():
+    """利用者の説明:
+
+        線が途中で消えているものは、抵抗帯を抜けてしまっているので、
+        流石に戻ってこなそうだなと感じたもの → エントリー中止。
+
+    抜けられた端も、それ以前に付けた折り返しも捨てる。切らないと、
+    **一度抜けた水準へ価格が戻ってきたときに古い指値が生き残る。**
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  higher_minutes=60, zone_source="range", range_bars=120,
+                  entry_at_zone_extreme=True, edge_mode="fade",
+                  exit_at_opposite_zone=True, max_open=4)
+    keep = collect_fade_trades(candles, **common, drop_broken_edges=False)
+    drop = collect_fade_trades(candles, **common, drop_broken_edges=True)
+    assert keep and drop
+    assert len(drop) < len(keep), (len(keep), len(drop))
+
+
+def test_dropping_broken_edges_never_uses_a_level_price_closed_beyond():
+    """捨てた端では二度と建玉を持たない。"""
+    from datetime import timedelta
+
+    from llmfx.data.resample import resample_candles
+
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    got = collect_fade_trades(
+        candles, stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+        higher_minutes=60, zone_source="range", range_bars=120,
+        entry_at_zone_extreme=True, edge_mode="fade", exit_at_opposite_zone=True,
+        max_open=4, drop_broken_edges=True)
+    assert got
+    h1 = resample_candles(candles, 60)
+    checked = 0
+    for t in got[:150]:
+        # **その折り返しが付いた後**に終値で越えていたら、捨てられている
+        # はず。付く前の値動きは関係ない(そこにはまだ線が無い)。
+        if not t.zone_touch_bars:
+            continue
+        born = t.zone_touch_bars[0]
+        level = t.entry
+        # **閉じた上位足だけを見る。**08:00 の H1 は 09:00 に閉じるので、
+        # 08:15 に約定した時点ではまだ確定していない。
+        end = candles[t.fill_index].time
+        window = [c for c in h1[born + 1:] if c.time + timedelta(hours=1) <= end]
+        broken = [c for c in window
+                  if (c.close > level if t.from_below else c.close < level)]
+        assert not broken, (t.entry, len(broken), broken[-1].time)
+        checked += 1
+    assert checked > 30, checked
+
+
+def test_the_break_is_judged_on_the_bar_the_zone_was_drawn_on():
+    """**下位足の終値で見ると、はみ出しただけで捨ててしまう。**
+
+    帯は上位足で引いているので、抜けたかどうかも上位足の終値で見る。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  zone_source="range", range_bars=120, entry_at_zone_extreme=True,
+                  edge_mode="fade", exit_at_opposite_zone=True, max_open=4,
+                  drop_broken_edges=True)
+    # 上位足を使う場合と使わない場合で、捨てる頻度が変わる
+    with_h = collect_fade_trades(candles, **common, higher_minutes=60)
+    without = collect_fade_trades(candles, **common)
+    assert with_h and without

@@ -276,6 +276,7 @@ def collect_fade_trades(
     break_confirm_atr: float = 0.0,
     max_open: int = 1,
     arm_within_atr: float = 0.0,
+    drop_broken_edges: bool = False,
     entry_beyond_atr: float = 0.0,
     warmup: int = 200,
     refresh_every: int = 50,
@@ -403,6 +404,18 @@ def collect_fade_trades(
 
     `close` は確認を待つぶん値段が悪くなるが、**触っただけで反転する形
     (跳ね返り側が狙っているまさにその形)を拾わずに済む**。
+
+    `drop_broken_edges` は **抜けられた端を捨てる**。利用者の説明:
+
+        線が途中で消えているものは、抵抗帯を抜けてしまっているので、
+        流石に戻ってこなそうだなと感じたもの → エントリー中止。
+
+    終値がその端を越えたら、**その端も、それ以前に付けた折り返しも捨てる**。
+    以後は破られた後に新しく付いた折り返しだけを使う。切らないと、
+    一度抜けた水準へ価格が戻ってきたときに古い指値が生き残る。利用者の懸念:
+
+        約定しなかったお残りがそのまま、勢いよく戻って来てブレイクした際に
+        約定して壊されている可能性がある。
 
     `arm_within_atr` は **帯へどこまで近づいたら場面として見るか**。
     0 なら「帯に触れた足」だけ。利用者の指摘:
@@ -574,7 +587,15 @@ def collect_fade_trades(
             else:
                 st["last_high"] = t.price
 
-    def absorb_turn(sw) -> None:
+    def absorb_turn(sw, series=None, upto: int = -1) -> None:
+        # **確定するまでの間に抜けられていたら、そもそも線を引かない。**
+        # スイングは左右 N 本で確定するので、折り返した足と気づく足の間に
+        # 数本ある。そこで終値が越えていたら、その水準はもう生きていない。
+        if drop_broken_edges and series is not None and upto > sw.index:
+            for c in series[sw.index + 1 : upto + 1]:
+                if (c.close > sw.price if sw.type is SwingType.HIGH
+                        else c.close < sw.price):
+                    return
         if sw.type is SwingType.HIGH:
             while turn_hi and turn_hi[-1][1] <= sw.price:
                 turn_hi.pop()
@@ -738,14 +759,14 @@ def collect_fade_trades(
                 hi_bar = hi_i
                 for swing in detector.swings[seen_swings:]:
                     tracker.update(swing, atr=atr_high[hi_i], bar_index=hi_bar)
-                    absorb_turn(swing)
+                    absorb_turn(swing, higher, hi_bar)
                 seen_swings = len(detector.swings)
                 if detector.swings:
                     # **差分だけでは足りない。**同じ向きが続くと検出器は
                     # 末尾を「より極端な方」で **置き換える** ので、
                     # 列の長さが伸びない。折り返しの最値を追うには、
                     # 末尾を毎回入れ直す必要がある。
-                    absorb_turn(detector.swings[-1])
+                    absorb_turn(detector.swings[-1], higher, hi_bar)
                 note_swings()
                 hi_i += 1
             # **帯を引いた足の物差しで測る。**下位足の ATR で上位足の帯を
@@ -757,12 +778,26 @@ def collect_fade_trades(
             a = detector.atr or 0.0
             for swing in detector.swings[seen_swings:]:
                 tracker.update(swing, atr=a, bar_index=i)
-                absorb_turn(swing)
+                absorb_turn(swing, candles, i)
             seen_swings = len(detector.swings)
             if detector.swings:
-                absorb_turn(detector.swings[-1])
+                absorb_turn(detector.swings[-1], candles, i)
             note_swings()
         atr_at.append(a)
+
+        # **抜けられた端は捨てる。**その端も、それ以前に付けた折り返しも
+        # 一緒に落とす(古い指値を生かさない)。判定は **帯を引いた足の
+        # 終値**で行う。下位足の終値で見ると、はみ出しただけで捨ててしまう。
+        # ここは建玉の空きや暖機に関係なく **毎足** 通す。飛ばすと、
+        # 手が空いていない間の抜けを見落として古い水準が生き残る。
+        if drop_broken_edges and zone_source == "range" and range_needs_turn:
+            ref = higher[hi_bar].close if higher is not None and hi_bar >= 0 else candle.close
+            # デックは前が最も外側、後ろへ行くほど内側。終値が越えた水準は
+            # **後ろから** 落ちる。前まで届けば全部消える(帯が無くなる)。
+            while turn_hi and turn_hi[-1][1] < ref:
+                turn_hi.pop()
+            while turn_lo and turn_lo[-1][1] > ref:
+                turn_lo.pop()
 
         if i < warmup or a <= 0 or i + max_wait_bars + horizon >= len(candles):
             continue
