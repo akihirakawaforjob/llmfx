@@ -52,6 +52,19 @@ def defenders_weakening(
     return rising if from_below else not rising
 
 
+def _near_nfp(moment, minutes: int) -> bool:
+    """米雇用統計の前後 `minutes` 分か。毎月第 1 金曜と決まっている。"""
+    from datetime import timedelta
+
+    from ..domain.sessions import _neighbour_months, nfp_time
+
+    window = timedelta(minutes=minutes)
+    for year, month in _neighbour_months(moment.year, moment.month):
+        if abs(moment - nfp_time(year, month)) <= window:
+            return True
+    return False
+
+
 def _atr_series(candles: list[Candle], period: int) -> list[float]:
     """各足までの ATR(Wilder)。上位足で帯を引くとき、下位足の値幅を
     測るのに要る。"""
@@ -145,6 +158,7 @@ def collect_fade_trades(
     max_range_atr: float | None = None,
     exit_at_opposite_zone: bool = False,
     blocked_hours_utc: frozenset[int] | None = None,
+    nfp_blackout_minutes: int = 0,
     skip_break_risk: bool = False,
     entry_from_range_bars: int | None = None,
     stop_from_range_bars: int | None = None,
@@ -215,6 +229,10 @@ def collect_fade_trades(
     **どの時間が薄いかは板の仕組みから事前に分かる。**成績を見てから
     悪い時間を外すのは選択バイアスだが、ロールオーバーを外すのは
     先読みにならない。
+
+    `nfp_blackout_minutes` は米雇用統計の前後この分数を避ける。毎月第 1
+    金曜と決まっているので事前に分かる。**指標は年 100 回程度で、
+    毎日あるロールオーバーとは頻度が桁で違う**ため、効きは小さいはず。
 
     `require_range` は **上下 2 本の帯が揃っているときだけ**建玉を持つ。
     こちらは能力ではなく絞り込み。既定では掛けない。
@@ -360,6 +378,8 @@ def collect_fade_trades(
             for j in range(i, min(i + max_wait_bars, len(candles))):
                 c = candles[j]
                 if blocked_hours_utc and c.time.hour in blocked_hours_utc:
+                    continue
+                if nfp_blackout_minutes and _near_nfp(c.time, nfp_blackout_minutes):
                     continue
                 if (c.high >= limit) if from_below else (c.low <= limit):
                     fill_at = j
