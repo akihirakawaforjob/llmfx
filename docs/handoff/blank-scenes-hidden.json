@@ -1,0 +1,71 @@
+{
+ "pair": "USDJPY",
+ "scenes": [
+  {
+   "no": 1,
+   "now": "2000-08-22T20:15:00+00:00",
+   "future_high": 108.39,
+   "future_low": 106.59,
+   "future_close": 107.11,
+   "ours": null
+  },
+  {
+   "no": 2,
+   "now": "2004-09-24T04:00:00+00:00",
+   "future_high": 111.77,
+   "future_low": 110.35,
+   "future_close": 111.49,
+   "ours": null
+  },
+  {
+   "no": 3,
+   "now": "2004-09-28T15:30:00+00:00",
+   "future_high": 111.57,
+   "future_low": 109.85,
+   "future_close": 110.19,
+   "ours": {
+    "bar_gap": 31,
+    "entry": 111.39,
+    "stop": 111.4928,
+    "long": false,
+    "r": -1.0
+   }
+  },
+  {
+   "no": 4,
+   "now": "2011-09-22T06:00:00+00:00",
+   "future_high": 76.88,
+   "future_low": 76.1,
+   "future_close": 76.47,
+   "ours": {
+    "bar_gap": 4,
+    "entry": 76.72,
+    "stop": 76.6262,
+    "long": true,
+    "r": -1.0
+   }
+  },
+  {
+   "no": 5,
+   "now": "2015-04-27T12:30:00+00:00",
+   "future_high": 119.433,
+   "future_low": 118.608,
+   "future_close": 119.033,
+   "ours": null
+  },
+  {
+   "no": 6,
+   "now": "2015-08-06T07:15:00+00:00",
+   "future_high": 125.071,
+   "future_low": 124.103,
+   "future_close": 124.607,
+   "ours": {
+    "bar_gap": 2,
+    "entry": 124.725,
+    "stop": 124.6576,
+    "long": true,
+    "r": -1.0
+   }
+  }
+ ]
+}
