@@ -230,6 +230,7 @@ def collect_fade_trades(
     intrabar: str = "stop_first",
     path_candles: list[Candle] | None = None,
     scale_to_zone_timeframe: bool = False,
+    entry_at_zone_extreme: bool = False,
     warmup: int = 200,
     refresh_every: int = 50,
 ) -> list[FadeTrade]:
@@ -272,6 +273,22 @@ def collect_fade_trades(
     `higher_minutes` を渡すと **帯を上位足で引く**。利用者の指定は
     「エントリーに使う時間軸の 2 つ上位」(M15 なら H1)。閉じた上位足
     しか使わないので先読みにならない。
+
+    `entry_at_zone_extreme` は **帯そのものの極値に指値を置く**。
+    利用者の手法はこれ:
+
+        15 分足でエントリーするなら、1 時間足を見て抵抗帯を見つけ、
+        その最値で 15 分足の基準でエントリーする。
+        ここで下位足の基準でエントリーするのは、損切ラインが遠くならない為と、
+        利確ラインへの伸びが大きく期待出来るからだ。
+
+    つまり **帯は上位足・損切りの物差しは下位足** という組み合わせ。
+    `higher_minutes=60` と併せ、`scale_to_zone_timeframe` は掛けない。
+
+    `entry_from_range_bars`(直近 N 本の最値)とは併用しない。最値の窓を
+    使うと指値が帯から離れる。実測では **指値が帯から 2.5 ATR も外へ出て、
+    守るべき帯とは無関係な場所で建玉を持っていた**(`docs/zone-trades.html`
+    の 3 例目)。
 
     `scale_to_zone_timeframe` は、帯を上位足で引いたときに **物差しも
     その足に合わせる**。利用者の指摘:
@@ -502,8 +519,10 @@ def collect_fade_trades(
                 k_stop = i
 
             if from_below:
-                if e_hi is not None:
-                    # 天井で売る。
+                if entry_at_zone_extreme:
+                    # 帯の極値そのもの = 折り返しの天井で売る。
+                    limit = zone.high
+                elif e_hi is not None:
                     limit = max(zone.high, e_hi[k])
                 else:
                     limit = zone.low + entry_offset_atr * a
@@ -515,7 +534,9 @@ def collect_fade_trades(
                     edge = max(edge, r_hi[k_stop])
                 stop = edge + stop_buffer_atr * a
             else:
-                if e_lo is not None:
+                if entry_at_zone_extreme:
+                    limit = zone.low
+                elif e_lo is not None:
                     limit = min(zone.low, e_lo[k])
                 else:
                     limit = zone.high - entry_offset_atr * a

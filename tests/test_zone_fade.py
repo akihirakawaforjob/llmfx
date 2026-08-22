@@ -556,3 +556,44 @@ def test_the_higher_timeframe_extreme_only_uses_closed_bars():
                 (t.entry, t.stop, t.r_multiple), t
             checked += 1
     assert checked > 20, checked
+
+
+def test_the_limit_can_sit_on_the_zone_extreme_itself():
+    """利用者の手法: 上位足で帯を見つけ、**その最値**に指値を置く。
+
+    直近 N 本の最値を使うと指値が帯から離れる。実データでは帯から
+    2.5 ATR も外へ出て、守るべき帯とは無関係な場所で建玉を持っていた。
+    """
+    got = trades(horizon=24, higher_minutes=60, exit_at_opposite_zone=True,
+                 entry_at_zone_extreme=True)
+    assert got
+    for t in got:
+        edge = t.zone_high if t.from_below else t.zone_low
+        assert abs(t.entry - edge) < 1e-9, t
+
+
+def test_the_zone_extreme_wins_over_the_rolling_window():
+    """両方渡されたら帯の極値を採る(窓は使わない)。"""
+    got = trades(horizon=24, higher_minutes=60, exit_at_opposite_zone=True,
+                 entry_at_zone_extreme=True, entry_from_range_bars=20)
+    assert got
+    for t in got:
+        edge = t.zone_high if t.from_below else t.zone_low
+        assert abs(t.entry - edge) < 1e-9, t
+
+
+def test_the_stop_stays_on_the_lower_timeframe_scale():
+    """帯は上位足でも、損切りの物差しは下位足のまま。
+
+    利用者の理由: 損切ラインが遠くならない為と、利確ラインへの伸びが
+    大きく期待出来るから。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=0.75, max_zone_width_atr=1.5, max_wait_bars=12,
+                  horizon=24, exit_at_opposite_zone=True, higher_minutes=60,
+                  entry_at_zone_extreme=True)
+    low = collect_fade_trades(candles, **common)
+    high = collect_fade_trades(candles, **common, scale_to_zone_timeframe=True)
+    assert low and high
+    med = lambda ts: sorted(abs(t.stop - t.entry) for t in ts)[len(ts) // 2]
+    assert med(low) < med(high), (med(low), med(high))
