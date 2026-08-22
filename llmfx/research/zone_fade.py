@@ -288,6 +288,7 @@ def collect_fade_trades(
     min_rejection_atr: float = 0.0,
     skip_against_trend: bool = False,
     max_tries_per_zone: int = 0,
+    breakeven_at_r: float = 0.0,
     entry_beyond_atr: float = 0.0,
     warmup: int = 200,
     refresh_every: int = 50,
@@ -424,6 +425,16 @@ def collect_fade_trades(
 
     1 週間の最値は遠いことが多く、そこまで戻ってこないと約定しない。
     直近の折り目まで寄せると、届く回数が増える。
+
+    `breakeven_at_r` は **そこまで伸びたら損切りを建値へ動かす**(0 で無効)。
+
+    解剖したところ、**46% の建玉が 1.0 R 以上伸びてから -1 R で切られていた**
+    (USD/JPY・2,704 件)。入り口ではなく持ち方で失っている。
+
+    ただし過去にダウ理論で建値移動を入れたときは、勝率が 17.9% -> 65.4% に
+    上がる代わりに平均勝ちが 4.79 R -> 0.47 R まで潰れて **中身が空**に
+    なった。利益が右の裾からしか来ていない構成では、裾に触る操作はすべて
+    損になる。**必ず約定ロジックを通して測ること。**概算は強く楽観に出る。
 
     `skip_against_trend` は **流れに逆らう側では張らない**。利用者が
     リプレイ画面で見つけた形:
@@ -741,6 +752,7 @@ def collect_fade_trades(
         # 売り(下から来た)なら損切りが上・反対側の帯が下。買いは鏡像。
         up = opposite if long_side else stop
         down = stop if long_side else opposite
+        be_done = False
         for step, c in enumerate(forward):
             fav = max((c.high - limit) * sign, (c.low - limit) * sign)
             adv = -min((c.high - limit) * sign, (c.low - limit) * sign)
@@ -776,7 +788,9 @@ def collect_fade_trades(
             if first == "stop":
                 hit_stop = True
                 held = step
-                result = -1.0
+                # **建値へ動かしていれば -1 R ではない。**動かした後の
+                # 損切り位置から計算する。
+                result = (stop - limit) * sign / risk
                 why, exit_price = "stop", stop
                 break
             if first == "opp":
@@ -785,6 +799,14 @@ def collect_fade_trades(
                 result = (opposite - limit) * sign / risk
                 why, exit_price = "opp", opposite
                 break
+            # **損切りを動かすのは、その足を見終わってから。**同じ足の中で
+            # 伸びてすぐ戻った場合に動かした損切りで切れたことにすると、
+            # その足の道順を勝手に決めてしまう。
+            if breakeven_at_r and not be_done and best >= breakeven_at_r * risk:
+                stop = limit
+                up = opposite if long_side else stop
+                down = stop if long_side else opposite
+                be_done = True
         if not hit_stop and why == "time":
             result = (forward[-1].close - limit) * sign / risk
             exit_price = forward[-1].close
