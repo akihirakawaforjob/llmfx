@@ -794,3 +794,70 @@ def test_auto_picks_the_break_side_only_when_defenders_are_losing():
 def test_an_unknown_edge_mode_is_refused():
     with pytest.raises(ValueError):
         trades(horizon=24, edge_mode="whatever")
+
+
+def test_the_break_can_wait_for_a_close_outside_the_edge():
+    """**端に触っただけでは抜けたことにならない。**利用者の指摘:
+
+        指値の位置がブレイクを見てからではなく、折り返し刈り取り用と
+        同じ場所をエントリーポイントに選んでしまっている。
+
+    終値が外に出るのを待ってから、次の足の始値で乗る。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  zone_source="range", range_bars=100,
+                  entry_at_zone_extreme=True, edge_mode="break")
+    touch = collect_fade_trades(candles, **common, break_confirm="touch")
+    close = collect_fade_trades(candles, **common, break_confirm="close")
+    assert touch and close
+    assert len(close) < len(touch), (len(touch), len(close))
+    for t in close:
+        # 約定は「確認できた足の次の足の始値」
+        assert t.entry == candles[t.fill_index].open, t
+        # 確認した足は必ず端の外で引けている
+        prev = candles[t.fill_index - 1]
+        edge = t.zone_high if t.from_below else t.zone_low
+        assert (prev.close >= edge) if t.from_below else (prev.close <= edge), t
+
+
+def test_a_wider_confirmation_asks_for_more_before_entering():
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  zone_source="range", range_bars=100,
+                  entry_at_zone_extreme=True, edge_mode="break",
+                  break_confirm="close")
+    near = collect_fade_trades(candles, **common, break_confirm_atr=0.0)
+    far = collect_fade_trades(candles, **common, break_confirm_atr=0.6)
+    assert near and far
+    assert len(far) < len(near), (len(near), len(far))
+
+
+def test_confirming_the_break_removes_same_bar_decisions():
+    """確認を待つと、約定した足の中で決着する取引がほぼ消える。
+
+    道順の仮定に成績が乗らなくなるので、測定としても素直になる。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    close = collect_fade_trades(
+        candles, stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+        zone_source="range", range_bars=100, entry_at_zone_extreme=True,
+        edge_mode="break", break_confirm="close")
+    same = [t for t in close if t.bars_held == 0]
+    assert len(same) / len(close) < 0.05, len(same) / len(close)
+
+
+def test_the_fade_side_ignores_the_break_confirmation():
+    """確認は抜けた側だけの話。跳ね返り側の挙動を変えない。"""
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    common = dict(stop_buffer_atr=1.5, max_wait_bars=12, horizon=240,
+                  zone_source="range", range_bars=100,
+                  entry_at_zone_extreme=True, edge_mode="fade")
+    a = collect_fade_trades(candles, **common, break_confirm="touch")
+    b = collect_fade_trades(candles, **common, break_confirm="close")
+    assert a and [t.entry for t in a] == [t.entry for t in b]
+
+
+def test_an_unknown_break_confirm_is_refused():
+    with pytest.raises(ValueError):
+        trades(horizon=24, break_confirm="whatever")

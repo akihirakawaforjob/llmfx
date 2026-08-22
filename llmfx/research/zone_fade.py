@@ -272,6 +272,8 @@ def collect_fade_trades(
     range_bars: int = 120,
     range_needs_turn: bool = True,
     edge_mode: str = "fade",
+    break_confirm: str = "touch",
+    break_confirm_atr: float = 0.0,
     entry_beyond_atr: float = 0.0,
     warmup: int = 200,
     refresh_every: int = 50,
@@ -365,6 +367,24 @@ def collect_fade_trades(
     抜けた側に乗る場合は、
     **入りが逆指値になるのでスプレッドを往復ぶん払う**(跳ね返り側は
     指値なので入りは無料)。反対側の帯は損失方向になるので決済先にしない。
+
+    `break_confirm` は **抜けた側に乗るときの入り方**。利用者の指摘:
+
+        指値の位置がブレイクを見てからではなく、折り返し刈り取り用と
+        同じ場所をエントリーポイントに選んでしまっている。これに乗るなら、
+        抵抗帯の押し負けが発生した時点、もしくは **ブレイクを見てから
+        乗る** が正しい。
+
+    | 値 | 中身 |
+    | --- | --- |
+    | `touch` | 端へ届いた瞬間に乗る。**端に触っただけで抜けていない** |
+    | `close` | **終値が端の外に出てから**、次の足の始値で乗る |
+
+    `break_confirm_atr` は「外に出た」と認める幅(端から ATR 何倍か)。
+    0 なら端を 1 ティックでも超えた終値で認める。
+
+    `close` は確認を待つぶん値段が悪くなるが、**触っただけで反転する形
+    (跳ね返り側が狙っているまさにその形)を拾わずに済む**。
 
     `entry_beyond_atr` は指値を極値の **さらに外側** へ置く。利用者の言う
     「抵抗帯の少し奥(スプレッド対策)に予め指値を設定しておく」。
@@ -485,6 +505,8 @@ def collect_fade_trades(
         raise ValueError(f"zone_source が不正: {zone_source!r}")
     if edge_mode not in ("fade", "break", "auto"):
         raise ValueError(f"edge_mode が不正: {edge_mode!r}")
+    if break_confirm not in ("touch", "close"):
+        raise ValueError(f"break_confirm が不正: {break_confirm!r}")
     if zone_source == "range" and not range_needs_turn:
         edge_high, edge_low = _rolling_extremes(
             higher if higher is not None else candles, range_bars)
@@ -707,16 +729,12 @@ def collect_fade_trades(
                 if r_lo is not None:
                     edge = min(edge, r_lo[k_stop])
                 stop = edge - stop_buffer_atr * a
-            if take_break:
-                # 抜けた側に乗るなら、損切りは **帯の内側** へ戻る。
-                # 上の端を上抜けて買うなら、損切りは端の下。
-                stop = (limit - stop_buffer_atr * a if long_side
-                        else limit + stop_buffer_atr * a)
-            risk = abs(stop - limit)
-            if risk <= 0:
-                continue
 
             # 指値が約定するのは、価格がそこへ **届いた** ときだけ。
+            # 抜けた側を終値で確認する場合は、**確認できた次の足の始値**。
+            wait_close = take_break and break_confirm == "close"
+            level = limit + (break_confirm_atr * a if from_below
+                             else -break_confirm_atr * a)
             fill_at = None
             for j in range(i, min(i + max_wait_bars, len(candles))):
                 c = candles[j]
@@ -724,7 +742,13 @@ def collect_fade_trades(
                     continue
                 if nfp_blackout_minutes and _near_nfp(c.time, nfp_blackout_minutes):
                     continue
-                if (c.high >= limit) if from_below else (c.low <= limit):
+                if wait_close:
+                    if ((c.close >= level) if from_below else (c.close <= level)) \
+                            and j + 1 < len(candles):
+                        fill_at = j + 1
+                        limit = candles[j + 1].open
+                        break
+                elif (c.high >= limit) if from_below else (c.low <= limit):
                     fill_at = j
                     break
             if fill_at is None:
@@ -732,6 +756,16 @@ def collect_fade_trades(
                 continue
 
             armed[key] = False
+
+            if take_break:
+                # 抜けた側に乗るなら、損切りは **帯の内側** へ戻る。
+                # 上の端を上抜けて買うなら、損切りは端の下。
+                # 終値で確認した場合は約定値(次の足の始値)から引く。
+                stop = (limit - stop_buffer_atr * a if long_side
+                        else limit + stop_buffer_atr * a)
+            risk = abs(stop - limit)
+            if risk <= 0:
+                continue
 
             # 反対側(利益方向)の帯。往復を刈るときの手仕舞い先。
             # **抜けた側に乗る場合は損失方向なので使わない。**
