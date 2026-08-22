@@ -106,8 +106,8 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
   body.rail-open .rail{transform:none;box-shadow:0 0 40px rgba(0,0,0,.35)}
   body.rail-open::after{content:"";position:fixed;inset:0;z-index:30;
     background:rgba(0,0,0,.35)}
-  .grid{min-height:56dvh}
-  .pane{min-height:56dvh}
+  .grid{min-height:auto}
+  .pane{min-height:44dvh}
   .top{position:sticky;top:0;z-index:20;gap:10px;padding:10px 12px}
   .top .clock{font-size:13.5px}
   .marks{max-height:none}
@@ -159,12 +159,14 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
     <div class="grp">
       <h2>入り方</h2>
-      <div class="field"><span>向き</span>
-        <select id="mode">
-          <option value="fade">跳ね返りに乗る(帯で逆張り)</option>
-          <option value="break">抜けた側に乗る</option>
-          <option value="none">線を引くだけ(建玉なし)</option>
-        </select></div>
+      <div class="field"><span>試す入り方(複数可・全部外せば線だけ)</span>
+        <label class="row"><input type="checkbox" id="m_fade" checked>
+          跳ね返りに乗る(帯で逆張り)</label>
+        <label class="row"><input type="checkbox" id="m_break">
+          抜けた側に乗る</label>
+        <label class="row"><input type="checkbox" id="m_weak">
+          押し負けで乗る(帯に届く前)</label>
+      </div>
       <div class="field"><span>指値の位置</span>
         <select id="entry">
           <option value="edge">帯の端そのもの</option>
@@ -179,6 +181,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       <label class="row"><input type="checkbox" id="showzones" checked>帯の線</label>
       <label class="row"><input type="checkbox" id="showswings" checked>折り返した点</label>
       <label class="row"><input type="checkbox" id="showorder" checked>指値と損切り</label>
+      <label class="row"><input type="checkbox" id="showfills" checked>約定と手仕舞いのピン</label>
       <div class="field"><span>1 画面に映す本数</span>
         <input type="number" id="bars" value="140" min="40" max="400" step="20"></div>
     </div>
@@ -427,36 +430,129 @@ function zonesOf(bars, atr, sw, cfg) {
 }
 
 // ---- いま置く注文 ----
-function orderOf(bars, z, sw, cfg) {
-  if (cfg.mode === "none" || !z.list.length) return null;
-  const now = bars[bars.length - 1][4], a = z.atr;
+// 入り方は複数を同時に試せる。**どれが何を拾うかを並べて見るため。**
+const METHODS = [
+  { id: "fade",  name: "跳ね返り", short: "跳" },
+  { id: "break", name: "抜けた側", short: "抜" },
+  { id: "weak",  name: "押し負け", short: "押" },
+];
+
+function ordersOf(bars, z, sw, cfg) {
+  const now = bars[bars.length - 1][4], a = z.atr, out = [];
+  if (!a) return out;
   const above = z.list.filter(x => (x.hi ?? x.price) > now);
   const below = z.list.filter(x => (x.lo ?? x.price) < now);
   const top = above.length ? above.reduce((m, x) => x.price < m.price ? x : m) : null;
   const bot = below.length ? below.reduce((m, x) => x.price > m.price ? x : m) : null;
   const conf = sw.filter(s => s.conf <= bars.length - 1);
-  const lastHi = [...conf].reverse().find(s => s.type === 1);
-  const lastLo = [...conf].reverse().find(s => s.type === -1);
-  const out = [];
-  for (const [z0, side] of [[top, 1], [bot, -1]]) {
-    if (!z0) continue;
-    let lv = side === 1 ? (z0.hi ?? z0.price) : (z0.lo ?? z0.price);
-    if (cfg.entry === "fold") {
-      const f = side === 1 ? lastHi : lastLo;
-      if (f) lv = side === 1 ? Math.min(lv, f.price) : Math.max(lv, f.price);
+  const hiS = [...conf].filter(s => s.type === 1).slice(-2);
+  const loS = [...conf].filter(s => s.type === -1).slice(-2);
+  const lastHi = hiS[hiS.length - 1], lastLo = loS[loS.length - 1];
+
+  for (const m of METHODS) {
+    if (!cfg.on[m.id]) continue;
+    if (m.id === "weak") {
+      // 押し負け: 安値が切り上がっていれば買い、高値が切り下がっていれば売り。
+      // **帯に届くのを待たない。**押される相手の帯があるときだけ。
+      const rising = loS.length === 2 && loS[1].price > loS[0].price;
+      const falling = hiS.length === 2 && hiS[1].price < hiS[0].price;
+      if (rising && top) out.push({ m: m.id, level: now, stop: lastLo.price - cfg.stop * a,
+                                    long: true, market: true, arena: top.price });
+      if (falling && bot) out.push({ m: m.id, level: now, stop: lastHi.price + cfg.stop * a,
+                                     long: false, market: true, arena: bot.price });
+      continue;
     }
-    // 跳ね返りに乗るなら帯と逆向き、抜けた側に乗るなら帯と同じ向き
-    const long = cfg.mode === "break" ? side === 1 : side === -1;
-    const stop = long ? lv - cfg.stop * a : lv + cfg.stop * a;
-    out.push({ level: lv, stop, long, side, arena: z0.arena });
+    for (const [z0, side] of [[top, 1], [bot, -1]]) {
+      if (!z0) continue;
+      let lv = side === 1 ? (z0.hi ?? z0.price) : (z0.lo ?? z0.price);
+      if (cfg.entry === "fold") {
+        const f = side === 1 ? lastHi : lastLo;
+        if (f) lv = side === 1 ? Math.min(lv, f.price) : Math.max(lv, f.price);
+      }
+      // 跳ね返りに乗るなら帯と逆向き、抜けた側に乗るなら帯と同じ向き
+      const long = m.id === "break" ? side === 1 : side === -1;
+      const stop = long ? lv - cfg.stop * a : lv + cfg.stop * a;
+      const opp = m.id === "fade" ? (side === 1 ? bot : top) : null;
+      out.push({ m: m.id, level: lv, stop, long, side,
+                 arena: opp ? opp.price : null });
+    }
   }
   return out;
+}
+
+// ---- 注文を裏で回す ----
+// 指値を置いた場所・約定した場所・手仕舞った場所にピンを打つため、
+// 再生に合わせて 1 本ずつ判定する。**先の足は一切見ない。**
+const SIM = { at: -1, pair: null, key: "", pend: {}, open: {}, done: [] };
+const HOLD = 240;   // 手仕舞いまで持つ下位足の本数
+
+function simKey(cfg) { return JSON.stringify(cfg.on) + cfg.zonetf + cfg.src + cfg.win
+  + cfg.tol + cfg.touch + cfg.rej + cfg.dropBroken + cfg.entry + cfg.stop; }
+
+function simTo(pair, cfg, to) {
+  const key = simKey(cfg);
+  if (SIM.pair !== pair || SIM.key !== key || to < SIM.at || to - SIM.at > 600) {
+    SIM.pair = pair; SIM.key = key; SIM.pend = {}; SIM.open = {}; SIM.done = [];
+    SIM.at = Math.max(300, to - 400);
+  }
+  const b = PAIRS[pair], tfm = TF[cfg.zonetf];
+  let lastZoneBar = -1;
+  for (let i = SIM.at + 1; i <= to; i++) {
+    const c = { h: b.h[i], l: b.l[i], c: b.c[i] };
+    // 建玉の判定が先。**同じ足で両方に触れたら損切りが先。**
+    for (const k in SIM.open) {
+      const o = SIM.open[k];
+      const hitStop = o.long ? c.l <= o.stop : c.h >= o.stop;
+      const hitOpp = o.arena != null && (o.long ? c.h >= o.arena : c.l <= o.arena);
+      let why = hitStop ? "損切り" : (hitOpp ? "利確" : (i - o.fillAt >= HOLD ? "時間切れ" : null));
+      if (!why) continue;
+      const px = why === "損切り" ? o.stop : (why === "利確" ? o.arena : c.c);
+      const r = (px - o.entry) * (o.long ? 1 : -1) / Math.abs(o.entry - o.stop);
+      SIM.done.push({ ...o, exitAt: i, exitPx: px, why, r });
+      delete SIM.open[k];
+    }
+    // 注文の約定
+    for (const k in SIM.pend) {
+      const p = SIM.pend[k];
+      if (SIM.open[k]) { delete SIM.pend[k]; continue; }
+      const touched = p.market || (p.long ? c.l <= p.level || p.up && c.h >= p.level
+                                          : c.h >= p.level || p.dn && c.l <= p.level);
+      const reach = p.market ? true
+        : (p.fromAbove ? c.l <= p.level : c.h >= p.level);
+      if (!reach) continue;
+      SIM.open[k] = { ...p, entry: p.market ? b.o[i] : p.level, fillAt: i };
+      delete SIM.pend[k];
+    }
+    // 帯を作り直す頃合い(上位足が 1 本進んだとき)
+    const zb = Math.floor(b.t[i] / tfm);
+    if (zb !== lastZoneBar) {
+      lastZoneBar = zb;
+      const bars = visible(pair, tfm, i, Math.max(cfg.win + 60, 260));
+      if (bars.length > 40) {
+        const at = atrOf(bars, 14), sws = swingsOf(bars, at, 3, 3, 0.6);
+        const zz = zonesOf(bars, at, sws, cfg);
+        for (const o of ordersOf(bars, zz, sws, cfg)) {
+          const k = o.m + "/" + (o.side || (o.long ? "L" : "S"));
+          if (SIM.open[k]) continue;
+          SIM.pend[k] = { ...o, placedAt: i,
+                          fromAbove: o.long ? true : false,
+                          // 買いなら下から届く、売りなら上から届く
+                          };
+          // 実際に届く向きは、いまの値段と指値の上下で決まる
+          SIM.pend[k].fromAbove = o.level < c.c;
+        }
+      }
+    }
+  }
+  SIM.at = to;
+  if (SIM.done.length > 60) SIM.done = SIM.done.slice(-60);
+  return SIM;
 }
 
 // ---- 描く ----
 function css(v) { return getComputedStyle(document.body).getPropertyValue(v).trim(); }
 
-function draw(cv, pair, tfName, i, cfg) {
+function draw(cv, pair, tfName, i, cfg, sim) {
   const dpr = window.devicePixelRatio || 1;
   const w = cv.clientWidth, h = cv.clientHeight;
   if (!w || !h) return null;
@@ -472,22 +568,26 @@ function draw(cv, pair, tfName, i, cfg) {
   const zatr = atrOf(zb, 14);
   const zsw = swingsOf(zb, zatr, 3, 3, 0.6);
   const z = zonesOf(zb, zatr, zsw, cfg);
-  const orders = orderOf(zb, z, zsw, cfg) || [];
+  const orders = ordersOf(zb, z, zsw, cfg);
+  const pend = Object.values(sim ? sim.pend : {});
+  const open = Object.values(sim ? sim.open : {});
+  const done = sim ? sim.done : [];
+  const live = [...pend, ...open];
 
   let lo = Infinity, hi = -Infinity;
+  const want0 = [];
   for (const b of bars) { lo = Math.min(lo, b[3]); hi = Math.max(hi, b[2]); }
   // **遠い線に引きずられて足が潰れないようにする。**線が値幅の半分より
   // 外にあるなら、そこまで広げずに端で見切る(端にラベルだけ出す)。
   const span = hi - lo, room = span * 0.5;
-  const want = [];
-  for (const o of orders) want.push(o.stop, o.level);
+  const want = [...want0];
   for (const q of z.list) want.push(q.lo ?? q.price, q.hi ?? q.price);
   for (const v of want) {
     if (v > hi && v <= hi + room) hi = v;
     if (v < lo && v >= lo - room) lo = v;
   }
   const pad = (hi - lo) * 0.06 || 0.01; lo -= pad; hi += pad;
-  const L = 8, R = 66, T = 6, B = 18, pw = w - L - R, ph = h - T - B;
+  const L = 8, R = 96, T = 6, B = 18, pw = w - L - R, ph = h - T - B;
   const Y = p => T + ph - (p - lo) / (hi - lo) * ph;
   const X = k => L + (k + 0.5) * (pw / bars.length);
   const cw = Math.max(1, Math.min(10, pw / bars.length * 0.66));
@@ -500,9 +600,10 @@ function draw(cv, pair, tfName, i, cfg) {
   let st = mag * 10;
   for (const m of [1, 2, 2.5, 5]) if (raw <= mag * m) { st = mag * m; break; }
   g.strokeStyle = rule; g.fillStyle = ink3; g.lineWidth = 1;
+  const gridY = [];
   for (let p = Math.ceil(lo / st) * st; p < hi; p += st) {
     g.beginPath(); g.moveTo(L, Y(p) + .5); g.lineTo(L + pw, Y(p) + .5); g.stroke();
-    g.fillText(p.toFixed(dp), L + pw + 5, Y(p));
+    gridY.push([Y(p), p]);
   }
 
   if (cfg.showZones) {
@@ -542,15 +643,81 @@ function draw(cv, pair, tfName, i, cfg) {
     }
   }
 
+  // 下位足の番号 -> このペインの何本目か
+  const tfm = TF[tfName], byT = new Map();
+  bars.forEach((b2, k) => byT.set(b2[0], k));
+  const posOf = idx => {
+    const t = Math.floor(PAIRS[pair].t[idx] / tfm) * tfm;
+    const k = byT.get(t);
+    return k === undefined ? null : X(k);
+  };
+  const shortOf = id => (METHODS.find(m => m.id === id) || {}).short || "?";
+
+  // 右端の文字は重なると読めない。置いた高さを覚えて 13px ずつ押し広げる。
+  const used = [];
+  // 目盛りの数字は薄く、注文の文字に譲る
+  for (const [yy, p] of gridY) {
+    if (Math.abs(yy - (T + ph)) < 6) continue;
+    g.fillStyle = ink3; g.fillText(p.toFixed(dp), L + pw + 5, yy);
+  }
+  function rightLabel(yy, txt, col) {
+    let y2 = yy;
+    while (used.some(u => Math.abs(u - y2) < 13)) y2 += 13;
+    if (y2 > T + ph + 12) return;
+    used.push(y2);
+    g.fillStyle = col; g.fillText(txt, L + pw + 5, y2);
+  }
+
   if (cfg.showOrder) {
-    for (const o of orders) {
-      g.setLineDash([]); g.strokeStyle = css("--entry"); g.lineWidth = 1.6;
+    for (const o of live) {
+      const held = o.fillAt !== undefined;
+      g.setLineDash([]); g.strokeStyle = css("--entry"); g.lineWidth = held ? 2.2 : 1.4;
       g.beginPath(); g.moveTo(L, Y(o.level) + .5); g.lineTo(L + pw, Y(o.level) + .5); g.stroke();
-      g.fillStyle = css("--entry");
-      g.fillText((o.long ? "買 " : "売 ") + o.level.toFixed(dp), L + pw + 5, Y(o.level));
-      g.setLineDash([5, 3]); g.strokeStyle = css("--stop"); g.lineWidth = 1.4;
+      rightLabel(Y(o.level), `${shortOf(o.m)}${o.long ? "買" : "売"} ${o.level.toFixed(dp)}`,
+                 css("--entry"));
+      g.setLineDash([5, 3]); g.strokeStyle = css("--stop"); g.lineWidth = held ? 1.8 : 1.2;
       g.beginPath(); g.moveTo(L, Y(o.stop) + .5); g.lineTo(L + pw, Y(o.stop) + .5); g.stroke();
       g.setLineDash([]);
+      rightLabel(Y(o.stop), `損 ${o.stop.toFixed(dp)}`, css("--stop"));
+    }
+  }
+
+  // ---- ピン: 指値を置いた場所 / 約定 / 手仕舞い ----
+  if (cfg.showFills) {
+    const pin = (x, y, kind, col, tag) => {
+      if (x === null) return;
+      g.fillStyle = col; g.strokeStyle = col; g.lineWidth = 1.4;
+      g.beginPath();
+      if (kind === "up") { g.moveTo(x, y - 7); g.lineTo(x - 5, y + 2); g.lineTo(x + 5, y + 2); }
+      else if (kind === "down") { g.moveTo(x, y + 7); g.lineTo(x - 5, y - 2); g.lineTo(x + 5, y - 2); }
+      else { g.rect(x - 4, y - 4, 8, 8); }
+      g.closePath(); g.fill();
+      if (tag) {
+        g.textAlign = "center";
+        g.fillText(tag, x, y + (kind === "down" ? 16 : -13));
+        g.textAlign = "left";
+      }
+    };
+    for (const o of live) {
+      if (o.placedAt !== undefined && o.fillAt === undefined)
+        pin(posOf(o.placedAt), Y(o.level), "sq", css("--band"), "指");
+      if (o.fillAt !== undefined)
+        pin(posOf(o.fillAt), Y(o.entry), o.long ? "up" : "down", css("--entry"), "約");
+    }
+    for (const t of done) {
+      const x1 = posOf(t.fillAt), x2 = posOf(t.exitAt);
+      if (x1 === null && x2 === null) continue;
+      const win = t.r > 0, col = win ? css("--target") : css("--stop");
+      if (x1 !== null && x2 !== null) {
+        g.strokeStyle = col; g.lineWidth = 1.2; g.setLineDash([2, 3]);
+        g.beginPath(); g.moveTo(x1, Y(t.entry)); g.lineTo(x2, Y(t.exitPx)); g.stroke();
+        g.setLineDash([]);
+      }
+      pin(x1, Y(t.entry), t.long ? "up" : "down", css("--entry"), "約");
+      // 数字は直近のものだけ。密集すると読めなくなる。
+      const fresh = done.length - done.indexOf(t) <= 6;
+      pin(x2, Y(t.exitPx), "sq", col,
+          fresh ? `決 ${t.r >= 0 ? "+" : ""}${t.r.toFixed(1)}R` : null);
     }
   }
 
@@ -575,7 +742,7 @@ function draw(cv, pair, tfName, i, cfg) {
     g.fillText(d.toISOString().slice(5, 16).replace("T", " "), X(k), h - 8);
   }
   g.textAlign = "left";
-  return { zones: z, orders, atr: z.atr };
+  return { zones: z, orders: live, atr: z.atr, done };
 }
 
 // ---- 画面と操作 ----
@@ -596,10 +763,12 @@ function cfg() {
     zonetf: $("zonetf").value, src: $("src").value,
     win: +$("win").value, tol: +$("tol").value, touch: +$("touch").value,
     rej: +$("rej").value, dropBroken: $("dropbroken").checked,
-    mode: $("mode").value, entry: $("entry").value, stop: +$("stop").value,
+    on: { fade: $("m_fade").checked, break: $("m_break").checked,
+          weak: $("m_weak").checked },
+    entry: $("entry").value, stop: +$("stop").value,
     bars: +$("bars").value,
     showZones: $("showzones").checked, showSwings: $("showswings").checked,
-    showOrder: $("showorder").checked,
+    showOrder: $("showorder").checked, showFills: $("showfills").checked,
   };
 }
 
@@ -629,12 +798,14 @@ for (const k in TF) {
   tfBtns[k] = b; $("tfs").appendChild(b);
 }
 
+const narrow = () => matchMedia("(max-width: 860px)").matches;
 const panes = {};
 function layout() {
   const grid = $("grid");
   grid.innerHTML = ""; for (const k in panes) delete panes[k];
   const n = S.shown.length;
-  const cols = S.big ? 1 : (n <= 1 ? 1 : 2);
+  // **狭い画面では必ず縦に積む。**横に並べるとローソクが潰れて読めない。
+  const cols = (S.big || narrow()) ? 1 : (n <= 1 ? 1 : 2);
   grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0,1fr))`;
   grid.style.gridTemplateRows = S.big ? "1fr"
     : `repeat(${Math.ceil(n / cols)}, minmax(0,1fr))`;
@@ -660,21 +831,25 @@ function render() {
   $("clock").textContent = d.toISOString().slice(0, 16).replace("T", " ") + " UTC";
   $("seek").value = Math.round(S.i / (b.n - 1) * 1000);
   $("seeklab").textContent = `位置 ${S.i.toLocaleString()} / ${b.n.toLocaleString()} 本`;
+  const sim = simTo(S.pair, c, S.i);
   last = {};
   for (const k in panes) {
-    const r = draw(panes[k].cv, S.pair, k, S.i, c);
+    const r = draw(panes[k].cv, S.pair, k, S.i, c, sim);
     if (r) {
       last[k] = r;
+      const held = Object.keys(sim.open).length;
       panes[k].tag.textContent = `帯 ${r.zones.list.length} 本` +
-        (r.orders.length ? ` · 注文 ${r.orders.length}` : "") +
+        ` · 注文 ${Object.keys(sim.pend).length}` +
+        (held ? ` · 建玉 ${held}` : "") +
         ` · ATR ${r.atr ? r.atr.toFixed(3) : "—"}`;
     }
   }
 }
 
 $("pair").onchange = e => { S.pair = e.target.value; S.i = 2000; render(); };
-for (const id of ["zonetf","src","win","tol","touch","rej","dropbroken","mode",
-                  "entry","stop","bars","showzones","showswings","showorder"])
+for (const id of ["zonetf","src","win","tol","touch","rej","dropbroken",
+                  "m_fade","m_break","m_weak","entry","stop","bars",
+                  "showzones","showswings","showorder","showfills"])
   $(id).addEventListener("change", render);
 $("seek").oninput = e => { S.i = Math.round(+e.target.value / 1000 * (PAIRS[S.pair].n - 1)); render(); };
 $("speed").oninput = e => {
@@ -724,8 +899,12 @@ function addMark() {
   const snap = {};
   for (const k in last) snap[k] = {
     zones: last[k].zones.list.map(z => +z.price.toFixed(3)),
-    orders: last[k].orders.map(o => ({ 買: o.long, 指値: +o.level.toFixed(3),
-                                       損切: +o.stop.toFixed(3) })),
+    orders: last[k].orders.map(o => ({ 入り方: o.m, 買: o.long,
+      指値: +o.level.toFixed(3), 損切: +o.stop.toFixed(3),
+      状態: o.fillAt !== undefined ? "建玉あり" : "待ち" })),
+    直近の手仕舞い: (last[k].done || []).slice(-5).map(t => ({
+      入り方: t.m, 買: t.long, 約定: +t.entry.toFixed(3),
+      手仕舞い: +t.exitPx.toFixed(3), 理由: t.why, R: +t.r.toFixed(2) })),
   };
   S.marks.push({ 銘柄: S.pair, 時刻: d, 位置: S.i, 価格: +b.c[S.i].toFixed(3),
                  ひとこと: $("note").value || "", 設定: c, 見えていた線: snap });
@@ -774,7 +953,6 @@ addEventListener("resize", () => render());
 // ---- 小さい画面 ----
 // 縦に長い操作欄が先に来ると、チャートまで延々とスクロールすることになる。
 // 引き出しにして、既定では閉じておく。
-const narrow = () => matchMedia("(max-width: 860px)").matches;
 $("gear").onclick = () => {
   document.body.classList.toggle("rail-open");
   $("gear").className = document.body.classList.contains("rail-open") ? "on" : "";
@@ -786,7 +964,7 @@ $("railclose").onclick = () => {
   setTimeout(render, 60);
 };
 if (narrow()) {
-  S.shown = ["H1"];
+  S.shown = ["H1", "M15"].sort((x, y) => TF[x] - TF[y]);
   for (const q in tfBtns) tfBtns[q].className = S.shown.includes(q) ? "on" : "";
 }
 
