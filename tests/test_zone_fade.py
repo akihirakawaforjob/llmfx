@@ -1093,5 +1093,6 @@ def test_the_round_trip_target_stays_on_the_weekly_frame():
                              for t in ts if t.opposite_price)
     a, b = span(window), span(fold)
     assert a and b
-    # 折り目へ寄せたぶん、指値から大枠までは **遠くなる**
-    assert b[len(b) // 2] > a[len(a) // 2] * 0.9, (a[len(a)//2], b[len(b)//2])
+    # 指値が内側へ寄るぶん、**反対側の大枠までは近くなる**。
+    # 取りに行く幅は減るが、相手は大枠のままなので折り目より遠い。
+    assert b[len(b) // 2] < a[len(a) // 2], (a[len(a) // 2], b[len(b) // 2])
