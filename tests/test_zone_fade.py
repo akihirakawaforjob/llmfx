@@ -255,3 +255,55 @@ def test_the_stop_stays_outside_the_entry_extreme():
             assert t.stop > t.entry
         else:
             assert t.stop < t.entry
+
+
+# --- 上位足の帯 / 上下 2 本のレンジ ---------------------------------------
+
+
+def test_higher_timeframe_zones_use_only_closed_bars():
+    """上位足は閉じてからしか使わない。先読みになる。"""
+    from llmfx.research.zone_fade import collect_fade_trades
+
+    candles = generate_synthetic_candles(count=12000, seed=5)
+    full = collect_fade_trades(candles, horizon=24, higher_minutes=60)
+    cut = collect_fade_trades(candles[:8000], horizon=24, higher_minutes=60)
+    assert cut
+    for a, b in zip(cut, full):
+        assert a.bar_index == b.bar_index
+        assert a.entry == pytest.approx(b.entry)
+        assert a.r_multiple == pytest.approx(b.r_multiple)
+
+
+def test_higher_timeframe_zones_are_fewer_and_wider():
+    """上位足の帯は数が減り、間隔が空く。"""
+    same = trades(horizon=24)
+    higher = trades(horizon=24, higher_minutes=60)
+    assert higher
+    assert len(higher) < len(same)
+
+
+def test_requiring_a_range_only_takes_setups_with_zones_on_both_sides():
+    """片側だけで張ると、そこを抜けられたときに一方的に負ける。"""
+    loose = trades(horizon=24)
+    strict = trades(horizon=24, require_range=True)
+    assert strict
+    assert len(strict) < len(loose)
+
+
+def test_a_range_wider_than_the_cap_is_skipped():
+    wide = trades(horizon=24, require_range=True)
+    narrow = trades(horizon=24, require_range=True, max_range_atr=3.0)
+    assert narrow
+    assert len(narrow) <= len(wide)
+
+
+def test_the_two_modes_stay_switchable():
+    """どちらが優れているかは測ってから決める。両方動くこと。"""
+    for kwargs in (
+        {},
+        {"higher_minutes": 60},
+        {"require_range": True},
+        {"higher_minutes": 60, "require_range": True},
+    ):
+        got = trades(horizon=24, **kwargs)
+        assert got, kwargs

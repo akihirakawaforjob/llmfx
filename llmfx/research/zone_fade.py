@@ -52,6 +52,22 @@ def defenders_weakening(
     return rising if from_below else not rising
 
 
+def _atr_series(candles: list[Candle], period: int) -> list[float]:
+    """各足までの ATR(Wilder)。上位足で帯を引くとき、下位足の値幅を
+    測るのに要る。"""
+    out: list[float] = []
+    run = 0.0
+    prev = candles[0].close if candles else 0.0
+    for i, c in enumerate(candles):
+        tr = c.high - c.low if i == 0 else max(
+            c.high - c.low, abs(c.high - prev), abs(c.low - prev)
+        )
+        run = tr if i == 0 else (run * (period - 1) + tr) / period
+        prev = c.close
+        out.append(run)
+    return out
+
+
 def _rolling_extremes(
     candles: list[Candle], window: int | None
 ) -> tuple[list[float] | None, list[float] | None]:
@@ -122,6 +138,9 @@ def collect_fade_trades(
     max_wait_bars: int = 12,
     horizon: int = 24,
     max_zone_width_atr: float | None = None,
+    higher_minutes: int | None = None,
+    require_range: bool = False,
+    max_range_atr: float | None = None,
     skip_break_risk: bool = False,
     entry_from_range_bars: int | None = None,
     stop_from_range_bars: int | None = None,
@@ -163,11 +182,36 @@ def collect_fade_trades(
     `stop_from_range_bars` は損切りの基準を帯の縁ではなく直近 N 本の
     最値にする。指値を最値へ置く場合は、損切りはそこから
     `stop_buffer_atr` だけ外側になるので、リスク幅を直接決められる。
+
+    `higher_minutes` を渡すと **帯を上位足で引く**。利用者の指定は
+    「エントリーに使う時間軸の 2 つ上位」(M15 なら H1)。閉じた上位足
+    しか使わないので先読みにならない。
+
+    `require_range` は **上下 2 本の帯が揃っているときだけ**建玉を持つ。
+    利用者の説明:
+
+        抵抗帯を 2 つ探し、そこをレンジとしてその間の往復を刈り取る。
+
+    片側だけで張ると、そこを抜けられたときに一方的に負ける。両側を
+    押さえていれば、抜けた側が次のエントリーになる。
+    `max_range_atr` は上下の間隔の上限(離れすぎた 2 本を組にしない)。
     """
+    from datetime import timedelta
+
+    from ..data.resample import resample_candles
+
     detector = SwingDetector(
         left=left, right=right, atr_period=atr_period, min_swing_atr=min_swing_atr
     )
     tracker = ZoneTracker(tolerance_atr=tolerance_atr, max_age_bars=max_age_bars)
+
+    # 帯を上位足で引く場合は、閉じた上位足だけを取り込む。
+    higher = resample_candles(candles, higher_minutes) if higher_minutes else None
+    span = timedelta(minutes=higher_minutes) if higher_minutes else None
+    atr_high = _atr_series(higher, atr_period) if higher else None
+    atr_low = _atr_series(candles, atr_period) if higher else None
+    hi_i = 0
+    hi_bar = -1
 
     # 直近 N 本の最値は、帯に触れるたびに窓を舐め直すと重い。
     # 実測では 48 通りの掃引が 1 銘柄 1 時間を超えた。O(n) で先に作る。
@@ -184,12 +228,22 @@ def collect_fade_trades(
     cached_at = -10**9
 
     for i, candle in enumerate(candles):
-        detector.update(candle)
-        a = detector.atr or 0.0
+        if higher is not None:
+            while hi_i < len(higher) and higher[hi_i].time + span <= candle.time:
+                detector.update(higher[hi_i])
+                hi_bar = hi_i
+                for swing in detector.swings[seen_swings:]:
+                    tracker.update(swing, atr=atr_high[hi_i], bar_index=hi_bar)
+                seen_swings = len(detector.swings)
+                hi_i += 1
+            a = atr_low[i]
+        else:
+            detector.update(candle)
+            a = detector.atr or 0.0
+            for swing in detector.swings[seen_swings:]:
+                tracker.update(swing, atr=a, bar_index=i)
+            seen_swings = len(detector.swings)
         atr_at.append(a)
-        for swing in detector.swings[seen_swings:]:
-            tracker.update(swing, atr=a, bar_index=i)
-        seen_swings = len(detector.swings)
 
         if i < warmup or a <= 0 or i + max_wait_bars + horizon >= len(candles):
             continue
@@ -200,11 +254,29 @@ def collect_fade_trades(
         # (600,000 足 x 数千の帯)。スイングが増えたときと、古い帯が落ちる
         # 頃合いだけ作り直す。**新しい帯の反映が遅れる方向にしかずれない**
         # ので、先読みにはならない。
+        age_index = hi_bar if higher is not None else i
+        if age_index < 0:
+            continue
         if seen_swings != cached_swings or i - cached_at >= refresh_every:
-            cached = tracker.zones(bar_index=i, min_touches=min_touches)
+            cached = tracker.zones(bar_index=age_index, min_touches=min_touches)
             cached_swings, cached_at = seen_swings, i
 
-        for zone in cached:
+        # 上下 2 本の帯が揃っているときだけ触る(利用者の言う「レンジ」)。
+        # 片側だけで張ると、そこを抜けられたときに一方的に負ける。
+        usable = cached
+        if require_range:
+            price = candle.close
+            above = [z for z in cached if z.price > price]
+            below = [z for z in cached if z.price <= price]
+            if not above or not below:
+                continue
+            top = min(above, key=lambda z: z.price)
+            bottom = max(below, key=lambda z: z.price)
+            if max_range_atr is not None and (top.price - bottom.price) > max_range_atr * a:
+                continue
+            usable = [top, bottom]
+
+        for zone in usable:
             width = zone.width / a
             if max_zone_width_atr is not None and width > max_zone_width_atr:
                 continue
