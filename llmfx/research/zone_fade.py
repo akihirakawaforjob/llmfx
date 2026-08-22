@@ -192,6 +192,15 @@ class FadeTrade:
     """
     exit_price: float = 0.0
     """決済した価格。損切りが効いているかを外から確かめられるようにする。"""
+    fill_index: int = -1
+    """指値が約定した足。`bar_index`(帯に触れて指値を決めた足)とは別。"""
+    opposite_price: float = 0.0
+    """建玉を持った時点で見ていた反対側の帯の縁。0 なら反対側が無かった。"""
+    zone_low: float = 0.0
+    zone_high: float = 0.0
+    zone_touch_bars: tuple[int, ...] = ()
+    """帯を作ったスイングの足番号。**その帯が本当に何度も試された水準か**
+    を図で確かめるために要る。帯を上位足で引いた場合は上位足の番号。"""
 
 
 def collect_fade_trades(
@@ -641,6 +650,10 @@ def collect_fade_trades(
                     bars_held=held,
                     entry_hour=candles[fill_at].time.hour,
                     why=why, exit_price=exit_price,
+                    fill_index=fill_at,
+                    opposite_price=opposite if opposite is not None else 0.0,
+                    zone_low=zone.low, zone_high=zone.high,
+                    zone_touch_bars=tuple(sw.index for sw in zone.touches),
                 )
             )
             busy_until = fill_at + held   # 同時に 1 建玉。決済したら次を張れる
