@@ -78,6 +78,13 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 .pane header b{color:var(--ink);font-size:12.5px;font-weight:600}
 .pane header .sp{margin-left:auto}
 .pane canvas{flex:1;width:100%;display:block;cursor:crosshair}
+.tip{position:absolute;z-index:15;background:var(--raise);border:1px solid var(--rule);
+  border-radius:3px;padding:9px 11px;font-family:"IBM Plex Mono",monospace;font-size:12px;
+  line-height:1.7;box-shadow:0 6px 22px rgba(0,0,0,.22);max-width:min(78vw,280px);
+  pointer-events:none}
+.tip b{display:block;font-size:12.5px;margin-bottom:3px;font-family:inherit}
+.tip .k{color:var(--ink-3)}
+.tip.win b{color:var(--target)} .tip.lose b{color:var(--stop)}
 .pane.big{grid-column:1/-1;grid-row:1/-1}
 
 .marks{border-top:1px solid var(--rule);background:var(--panel);padding:12px 20px 20px;
@@ -515,8 +522,7 @@ function simTo(pair, cfg, to) {
     for (const k in SIM.pend) {
       const p = SIM.pend[k];
       if (SIM.open[k]) { delete SIM.pend[k]; continue; }
-      const touched = p.market || (p.long ? c.l <= p.level || p.up && c.h >= p.level
-                                          : c.h >= p.level || p.dn && c.l <= p.level);
+      // 届く向きは、注文を置いた時の値段と指値の上下で決まる。
       const reach = p.market ? true
         : (p.fromAbove ? c.l <= p.level : c.h >= p.level);
       if (!reach) continue;
@@ -534,12 +540,7 @@ function simTo(pair, cfg, to) {
         for (const o of ordersOf(bars, zz, sws, cfg)) {
           const k = o.m + "/" + (o.side || (o.long ? "L" : "S"));
           if (SIM.open[k]) continue;
-          SIM.pend[k] = { ...o, placedAt: i,
-                          fromAbove: o.long ? true : false,
-                          // 買いなら下から届く、売りなら上から届く
-                          };
-          // 実際に届く向きは、いまの値段と指値の上下で決まる
-          SIM.pend[k].fromAbove = o.level < c.c;
+          SIM.pend[k] = { ...o, placedAt: i, fromAbove: o.level < c.c };
         }
       }
     }
@@ -587,7 +588,7 @@ function draw(cv, pair, tfName, i, cfg, sim) {
     if (v < lo && v >= lo - room) lo = v;
   }
   const pad = (hi - lo) * 0.06 || 0.01; lo -= pad; hi += pad;
-  const L = 8, R = 96, T = 6, B = 18, pw = w - L - R, ph = h - T - B;
+  const L = 8, R = cfg.compact ? 88 : 100, T = 6, B = 18, pw = w - L - R, ph = h - T - B;
   const Y = p => T + ph - (p - lo) / (hi - lo) * ph;
   const X = k => L + (k + 0.5) * (pw / bars.length);
   const cw = Math.max(1, Math.min(10, pw / bars.length * 0.66));
@@ -673,19 +674,28 @@ function draw(cv, pair, tfName, i, cfg, sim) {
       const held = o.fillAt !== undefined;
       g.setLineDash([]); g.strokeStyle = css("--entry"); g.lineWidth = held ? 2.2 : 1.4;
       g.beginPath(); g.moveTo(L, Y(o.level) + .5); g.lineTo(L + pw, Y(o.level) + .5); g.stroke();
-      rightLabel(Y(o.level), `${shortOf(o.m)}${o.long ? "買" : "売"} ${o.level.toFixed(dp)}`,
-                 css("--entry"));
+      // ● は持っている建玉、○ は届くのを待っている注文。
+      // 同じ入り方で両方あることがあるので、見分けが要る。
+      if (o.level <= hi && o.level >= lo)
+        rightLabel(Y(o.level),
+                   `${held ? "●" : "○"}${shortOf(o.m)}${o.long ? "買" : "売"} ` +
+                   o.level.toFixed(dp), css("--entry"));
       g.setLineDash([5, 3]); g.strokeStyle = css("--stop"); g.lineWidth = held ? 1.8 : 1.2;
       g.beginPath(); g.moveTo(L, Y(o.stop) + .5); g.lineTo(L + pw, Y(o.stop) + .5); g.stroke();
       g.setLineDash([]);
-      rightLabel(Y(o.stop), `損 ${o.stop.toFixed(dp)}`, css("--stop"));
+      if (o.stop <= hi && o.stop >= lo)
+        rightLabel(Y(o.stop), cfg.compact ? "損" : `損 ${o.stop.toFixed(dp)}`,
+                   css("--stop"));
     }
   }
 
   // ---- ピン: 指値を置いた場所 / 約定 / 手仕舞い ----
+  const pins = [];
   if (cfg.showFills) {
-    const pin = (x, y, kind, col, tag) => {
+    const pin = (x, y, kind, col, tag, info) => {
       if (x === null) return;
+      if (info) pins.push({ x, y, info });
+      if (!cfg.pinText) tag = null;   // 狭い画面では文字を出さない
       g.fillStyle = col; g.strokeStyle = col; g.lineWidth = 1.4;
       g.beginPath();
       if (kind === "up") { g.moveTo(x, y - 7); g.lineTo(x - 5, y + 2); g.lineTo(x + 5, y + 2); }
@@ -698,11 +708,20 @@ function draw(cv, pair, tfName, i, cfg, sim) {
         g.textAlign = "left";
       }
     };
+    const when = idx => new Date(PAIRS[pair].t[idx] * 60000)
+      .toISOString().slice(0, 16).replace("T", " ");
     for (const o of live) {
       if (o.placedAt !== undefined && o.fillAt === undefined)
-        pin(posOf(o.placedAt), Y(o.level), "sq", css("--band"), "指");
+        pin(posOf(o.placedAt), Y(o.level), "sq", css("--band"), "指", {
+          種別: "指値を置いた", 入り方: (METHODS.find(m => m.id === o.m) || {}).name,
+          向き: o.long ? "買い" : "売り", 指値: o.level.toFixed(dp),
+          損切り: o.stop.toFixed(dp), 時刻: when(o.placedAt) });
       if (o.fillAt !== undefined)
-        pin(posOf(o.fillAt), Y(o.entry), o.long ? "up" : "down", css("--entry"), "約");
+        pin(posOf(o.fillAt), Y(o.entry), o.long ? "up" : "down", css("--entry"), "約", {
+          種別: "約定(まだ持っている)",
+          入り方: (METHODS.find(m => m.id === o.m) || {}).name,
+          向き: o.long ? "買い" : "売り", 約定: o.entry.toFixed(dp),
+          損切り: o.stop.toFixed(dp), 時刻: when(o.fillAt) });
     }
     for (const t of done) {
       const x1 = posOf(t.fillAt), x2 = posOf(t.exitAt);
@@ -713,11 +732,19 @@ function draw(cv, pair, tfName, i, cfg, sim) {
         g.beginPath(); g.moveTo(x1, Y(t.entry)); g.lineTo(x2, Y(t.exitPx)); g.stroke();
         g.setLineDash([]);
       }
-      pin(x1, Y(t.entry), t.long ? "up" : "down", css("--entry"), "約");
+      const info = {
+        種別: "手仕舞い済み", 入り方: (METHODS.find(m => m.id === t.m) || {}).name,
+        向き: t.long ? "買い" : "売り",
+        約定: t.entry.toFixed(dp), 手仕舞い: t.exitPx.toFixed(dp),
+        損切り: t.stop.toFixed(dp), 理由: t.why,
+        成果: `${t.r >= 0 ? "+" : ""}${t.r.toFixed(2)} R`,
+        時刻: when(t.fillAt) + " → " + when(t.exitAt),
+      };
+      pin(x1, Y(t.entry), t.long ? "up" : "down", css("--entry"), "約", info);
       // 数字は直近のものだけ。密集すると読めなくなる。
       const fresh = done.length - done.indexOf(t) <= 6;
       pin(x2, Y(t.exitPx), "sq", col,
-          fresh ? `決 ${t.r >= 0 ? "+" : ""}${t.r.toFixed(1)}R` : null);
+          fresh ? `決 ${t.r >= 0 ? "+" : ""}${t.r.toFixed(1)}R` : null, info);
     }
   }
 
@@ -728,7 +755,8 @@ function draw(cv, pair, tfName, i, cfg, sim) {
                                  [o.stop, css("--stop"), "損"]]) {
       if (v <= hi && v >= lo) continue;
       g.fillStyle = col;
-      g.fillText(`↑ ${tag} ${v.toFixed(dp)}`, L + pw - 6, v > hi ? T + 8 : T + ph - 8);
+      g.fillText(`${v > hi ? "↑" : "↓"} ${tag} ${v.toFixed(dp)}`,
+                 L + pw - 6, v > hi ? T + 9 : T + ph - 16);
     }
   }
   g.textAlign = "left";
@@ -742,7 +770,7 @@ function draw(cv, pair, tfName, i, cfg, sim) {
     g.fillText(d.toISOString().slice(5, 16).replace("T", " "), X(k), h - 8);
   }
   g.textAlign = "left";
-  return { zones: z, orders: live, atr: z.atr, done };
+  return { zones: z, orders: live, atr: z.atr, done, pins };
 }
 
 // ---- 画面と操作 ----
@@ -769,6 +797,8 @@ function cfg() {
     bars: +$("bars").value,
     showZones: $("showzones").checked, showSwings: $("showswings").checked,
     showOrder: $("showorder").checked, showFills: $("showfills").checked,
+    // **狭い画面ではピンの文字を出さない。**押したら詳細を出す。
+    pinText: !narrow(), compact: narrow(),
   };
 }
 
@@ -818,12 +848,51 @@ function layout() {
       <canvas></canvas>`;
     d.querySelector(".zoom").onclick = () => { S.big = S.big === k ? null : k; layout(); };
     grid.appendChild(d);
-    panes[k] = { el: d, cv: d.querySelector("canvas"), tag: d.querySelector(".tag") };
+    const cv = d.querySelector("canvas");
+    panes[k] = { el: d, cv, tag: d.querySelector(".tag"), tip: null };
+    const hit = ev => {
+      const r = cv.getBoundingClientRect();
+      const px = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+      const py = (ev.touches ? ev.touches[0].clientY : ev.clientY) - r.top;
+      const list = (last && last[k] && last[k].pins) || [];
+      let best = null, bd = 26 * 26;
+      for (const q of list) {
+        const dd = (q.x - px) ** 2 + (q.y - py) ** 2;
+        if (dd < bd) { bd = dd; best = q; }
+      }
+      showTip(k, best, px, py);
+    };
+    cv.addEventListener("click", hit);
+    cv.addEventListener("touchstart", hit, { passive: true });
   }
   render();
 }
 
 let last = null;
+
+function showTip(k, pin, px, py) {
+  const pane = panes[k];
+  if (!pane) return;
+  if (pane.tip) { pane.tip.remove(); pane.tip = null; }
+  if (!pin) return;
+  const d = document.createElement("div");
+  const r = pin.info.成果;
+  d.className = "tip" + (r ? (parseFloat(r) >= 0 ? " win" : " lose") : "");
+  let html = `<b>${pin.info.種別}</b>`;
+  for (const key in pin.info) {
+    if (key === "種別") continue;
+    html += `<div><span class="k">${key}</span> ${pin.info[key]}</div>`;
+  }
+  d.innerHTML = html;
+  pane.el.appendChild(d);
+  const w = pane.el.clientWidth, h = pane.el.clientHeight;
+  const bw = d.offsetWidth, bh = d.offsetHeight;
+  d.style.left = Math.max(4, Math.min(w - bw - 4, px - bw / 2)) + "px";
+  d.style.top = (py + bh + 44 > h ? Math.max(4, py - bh - 14) : py + 14) + "px";
+  pane.tip = d;
+}
+function clearTips() { for (const k in panes) if (panes[k].tip)
+  { panes[k].tip.remove(); panes[k].tip = null; } }
 function render() {
   const c = cfg(), b = PAIRS[S.pair];
   S.i = Math.max(300, Math.min(b.n - 1, S.i));
@@ -832,6 +901,7 @@ function render() {
   $("seek").value = Math.round(S.i / (b.n - 1) * 1000);
   $("seeklab").textContent = `位置 ${S.i.toLocaleString()} / ${b.n.toLocaleString()} 本`;
   const sim = simTo(S.pair, c, S.i);
+  clearTips();
   last = {};
   for (const k in panes) {
     const r = draw(panes[k].cv, S.pair, k, S.i, c, sim);
