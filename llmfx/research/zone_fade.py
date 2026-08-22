@@ -501,8 +501,11 @@ def collect_fade_trades(
             from_below = candles[i - 1].close < zone.price
 
             # ブレイクリスク: 守り手が押し負け始めている帯には近づかない。
+            # **足番号は帯を引いた足のもの。**上位足で帯を引いているのに
+            # 下位足の番号で確定を判定すると、比較する物差しが揃わない
+            # (数が 4 倍あるので、どのスイングも「確定済み」になる)。
             if skip_break_risk and defenders_weakening(
-                detector.swings, from_below, i
+                detector.swings, from_below, age_index
             ):
                 continue
 
