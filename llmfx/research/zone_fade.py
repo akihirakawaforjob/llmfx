@@ -285,6 +285,7 @@ def collect_fade_trades(
     max_open: int = 1,
     arm_within_atr: float = 0.0,
     drop_broken_edges: bool = False,
+    min_rejection_atr: float = 0.0,
     entry_beyond_atr: float = 0.0,
     warmup: int = 200,
     refresh_every: int = 50,
@@ -421,6 +422,18 @@ def collect_fade_trades(
 
     1 週間の最値は遠いことが多く、そこまで戻ってこないと約定しない。
     直近の折り目まで寄せると、届く回数が増える。
+
+    `min_rejection_atr` は **弾きの強さ** で帯を絞る。利用者の指摘:
+
+        大口投資家はそんなに何回もポジションを変えないし、大枠で見て
+        弾きの強かった線の方がデータとしてももう少し強かった。
+
+    「何回試されたか」は 3 回測って 3 回とも否定された(要求する回数を
+    増やすほど単調に悪化)。**回数ではなく 1 回あたりの弾きの大きさ**で
+    見る。各接触のあと価格がどれだけ離れたか(次のスイングまでの値幅)を
+    ATR 倍で測り、その中央値がこの値に満たない帯は触らない。
+
+    最後の接触には「次」がまだ無いので数に入れない(先読みを避ける)。
 
     `drop_broken_edges` は **抜けられた端を捨てる**。利用者の説明:
 
@@ -664,6 +677,24 @@ def collect_fade_trades(
     armed: dict[int, bool] = {}
     open_until: list[int] = []   # 建玉が空くまでの足番号。max_open まで持てる
     dead_zones: dict[int, int] = {}   # 抜けられた帯 -> 抜けられた足番号
+    # スイングの足番号 -> 次のスイングまでの値幅(ATR 倍)。弾きの強さ。
+    # **次が確定してから入る**ので、先読みにならない。
+    swing_move: dict[int, float] = {}
+    prev_swing = [None]
+
+    def note_move(sw, atr: float) -> None:
+        p = prev_swing[0]
+        if p is not None and atr > 0 and p.index != sw.index:
+            swing_move[p.index] = abs(sw.price - p.price) / atr
+        prev_swing[0] = sw
+
+    def rejection(z) -> float:
+        """その帯が過去に弾いた大きさの中央値(ATR 倍)。"""
+        vals = [swing_move[sw.index] for sw in z.touches if sw.index in swing_move]
+        if not vals:
+            return 0.0
+        vals.sort()
+        return vals[len(vals) // 2]
     was_rising = was_falling = False
     cached: list = []
     cached_swings = -1
@@ -778,6 +809,7 @@ def collect_fade_trades(
                 for swing in detector.swings[seen_swings:]:
                     tracker.update(swing, atr=atr_high[hi_i], bar_index=hi_bar)
                     absorb_turn(swing, higher, hi_bar)
+                    note_move(swing, atr_high[hi_i])
                 seen_swings = len(detector.swings)
                 if detector.swings:
                     # **差分だけでは足りない。**同じ向きが続くと検出器は
@@ -797,6 +829,7 @@ def collect_fade_trades(
             for swing in detector.swings[seen_swings:]:
                 tracker.update(swing, atr=a, bar_index=i)
                 absorb_turn(swing, candles, i)
+                note_move(swing, a)
             seen_swings = len(detector.swings)
             if detector.swings:
                 absorb_turn(detector.swings[-1], candles, i)
@@ -922,6 +955,11 @@ def collect_fade_trades(
             cached = [z for z in cached
                       if max((sw.index for sw in z.touches), default=-1)
                       > dead_zones.get(id(z), -1)]
+            if not cached:
+                continue
+
+        if min_rejection_atr > 0:
+            cached = [z for z in cached if rejection(z) >= min_rejection_atr]
             if not cached:
                 continue
 
