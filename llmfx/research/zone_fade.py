@@ -136,6 +136,15 @@ class FadeTrade:
     bars_held: int
     entry_hour: int = 0
     """約定した足の UTC 時。スプレッドが開く時間帯を後から評価するのに使う。"""
+    why: str = ""
+    """どこで決済したか。"stop" / "opp"(反対側の帯) / "time"(時間切れ)。
+
+    負けの内訳を出口ごとに割るために要る。**反対側の帯での決済が
+    損になっていたら、それは選び方のバグ。**実際に一度そうなっていて、
+    平均 -3.78 R・最悪 -35 R の「利確」が負けの半分を占めていた。
+    """
+    exit_price: float = 0.0
+    """決済した価格。損切りが効いているかを外から確かめられるようにする。"""
 
 
 def collect_fade_trades(
@@ -393,11 +402,26 @@ def collect_fade_trades(
             # 反対側(利益方向)の帯。往復を刈るときの手仕舞い先。
             opposite = None
             if exit_at_opposite_zone:
-                other = [z for z in cached if z is not zone
-                         and (z.price < limit if from_below else z.price > limit)]
+                # **利益方向にあり、かつ指値より手前で決済になる帯だけ**を
+                # 反対側とみなす。ここを緩めると、決済価格が損切りより
+                # 悪い帯を掴む。実測では負けの半分がそれで、平均 -3.78 R、
+                # 最悪 -35 R まで行っていた(損切りが機能していない)。
+                other = []
+                for z in cached:
+                    if z is zone:
+                        continue
+                    edge = z.high if from_below else z.low
+                    gain = (limit - edge) if from_below else (edge - limit)
+                    if gain > 0:
+                        other.append(z)
                 if other:
-                    opposite = (max(other, key=lambda z: z.price) if from_below
-                                else min(other, key=lambda z: z.price))
+                    picked = (max(other, key=lambda z: z.high) if from_below
+                              else min(other, key=lambda z: z.low))
+                    # **縁の値をここで確定させる。**Zone は接触が足される
+                    # たびに low/high が広がるので、参照のまま持つと決済
+                    # 判定の時点で縁が動いている。実測ではそれで縁が指値の
+                    # 向こう側へ回り込み、-35 R の「利確」が発生していた。
+                    opposite = picked.high if from_below else picked.low
 
             sign = -1.0 if from_below else 1.0
             # **約定した足そのものから見る。**その足の残りで損切りまで
@@ -408,6 +432,7 @@ def collect_fade_trades(
                 continue
 
             best = worst = 0.0
+            why, exit_price = "time", 0.0
             hit_stop = False
             held = horizon
             result = 0.0
@@ -423,17 +448,19 @@ def collect_fade_trades(
                     hit_stop = True
                     held = step
                     result = -1.0
+                    why, exit_price = "stop", stop
                     break
                 if opposite is not None:
-                    # 反対側の帯の **手前の縁** で手仕舞う。
-                    edge = opposite.high if from_below else opposite.low
-                    reached = (c.low <= edge) if from_below else (c.high >= edge)
+                    # 反対側の帯の **手前の縁**(建玉を持った時点の値)で手仕舞う。
+                    reached = (c.low <= opposite) if from_below else (c.high >= opposite)
                     if reached:
                         held = step
-                        result = (edge - limit) * sign / risk
+                        result = (opposite - limit) * sign / risk
+                        why, exit_price = "opp", opposite
                         break
-            if not hit_stop:
+            if not hit_stop and why == "time":
                 result = (forward[-1].close - limit) * sign / risk
+                exit_price = forward[-1].close
 
             trades.append(
                 FadeTrade(
@@ -452,6 +479,7 @@ def collect_fade_trades(
                     hit_stop=hit_stop,
                     bars_held=held,
                     entry_hour=candles[fill_at].time.hour,
+                    why=why, exit_price=exit_price,
                 )
             )
             busy_until = fill_at + held   # 同時に 1 建玉。決済したら次を張れる

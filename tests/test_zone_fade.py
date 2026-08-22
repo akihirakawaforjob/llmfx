@@ -371,3 +371,69 @@ def test_every_trade_records_the_hour_it_filled():
     assert got
     assert all(0 <= t.entry_hour <= 23 for t in got)
     assert len({t.entry_hour for t in got}) > 1, "1 つの時刻に偏っている"
+
+
+# --- 損切りが床であること(反対側の帯で決済するときの取り違え)-------------
+
+
+def test_no_trade_loses_more_than_one_r():
+    """**損切りより悪い決済が出たら、それは決済先の選び方のバグ。**
+
+    一度これが起きていた。反対側の帯を「平均値が指値の向こう側にある帯」で
+    選び、決済は **手前の縁** で行っていたため、幅の広い帯だと縁が指値の
+    こちら側へ回り込み、損切りを飛び越えた地点で「利確」していた。
+    実データ(USD/JPY 開発用)では負けの半分がこれで、平均 -3.78 R、
+    最悪 -35.35 R。損切りが機能していない取引が半分あった。
+
+    ただし**この床だけを見ていても気づけない**。合成データでは縁の
+    回り込みが浅く、バグを戻しても床は割れなかった。原因を掴むのは
+    次の 2 つ(利益方向にあるか / 縁を建玉時に確定しているか)のほう。
+    """
+    for kwargs in ({}, {"exit_at_opposite_zone": True},
+                   {"higher_minutes": 60, "exit_at_opposite_zone": True}):
+        got = trades(horizon=24, **kwargs)
+        assert got, kwargs
+        worst = min(got, key=lambda t: t.r_multiple)
+        assert worst.r_multiple >= -1.0 - 1e-9, (kwargs, worst)
+
+
+def test_the_opposite_zone_is_always_on_the_profit_side():
+    """反対側の帯で決済したなら、必ず利益になっていること。
+
+    建玉を持った時点で利益方向にある帯だけを選ぶので、そこへ届いた
+    ということは利が乗っている。届かなければ損切りか時間切れになる。
+    """
+    got = trades(horizon=24, exit_at_opposite_zone=True)
+    closed = [t for t in got if t.why == "opp"]
+    assert closed, "反対側で決済した取引が 1 件も無い"
+    for t in closed:
+        assert t.r_multiple > 0, t
+        if t.from_below:
+            assert t.exit_price < t.entry, t   # 売りなので下で決済
+        else:
+            assert t.exit_price > t.entry, t
+
+
+def test_the_opposite_edge_is_fixed_when_the_position_is_opened():
+    """帯は接触が足されるたびに広がる。**参照のまま持つと縁が動く。**
+
+    決済の判定時に縁が指値の向こう側へ回り込んでいた。決済価格が
+    損切りより悪くなるのはこれが原因だった。建玉を持った時点の値で
+    確定させること。
+    """
+    got = trades(horizon=24, exit_at_opposite_zone=True)
+    for t in got:
+        if t.why != "opp":
+            continue
+        gain = (t.entry - t.exit_price) if t.from_below else (t.exit_price - t.entry)
+        assert gain > 0, t
+        # R に直しても損切り幅より手前で切れていない
+        assert abs(t.r_multiple) < 1e6
+
+
+def test_every_trade_records_where_it_exited():
+    got = trades(horizon=24, exit_at_opposite_zone=True)
+    assert {t.why for t in got} <= {"stop", "opp", "time"}
+    assert {"stop", "opp"} <= {t.why for t in got}
+    for t in got:
+        assert (t.why == "stop") == t.hit_stop, t
