@@ -1295,3 +1295,37 @@ def test_the_rejection_entry_takes_the_fade_side():
             assert t.stop > t.entry, "売りなら損切りは上"
         else:
             assert t.stop < t.entry, "買いなら損切りは下"
+
+
+def test_the_rejection_entry_has_no_lookahead():
+    """データを途中で打ち切っても、それ以前に決済が済んだ取引は変わらない。
+
+    このプロジェクトで最も強い数字が出た形なので、いちばん危ない
+    可能性(先読み)をここで塞ぐ。打ち切った時点より前に決済まで
+    終わっている取引は、後ろのデータを見ていないはず。
+    """
+    candles = generate_synthetic_candles(count=20_000, seed=5)
+    base = dict(higher_minutes=60, zone_source="range", range_bars=120,
+                range_needs_turn=True, entry_at_zone_extreme=True,
+                exit_at_opposite_zone=True, max_wait_bars=12, horizon=240,
+                stop_buffer_atr=1.5, max_open=4, intrabar="ohlc",
+                edge_mode="rejection", rejection_wick_atr=0.0,
+                breakeven_at_r=0.05)
+    full = collect_fade_trades(candles, **base)
+    assert full
+    for frac in (0.5, 0.7, 0.9):
+        cut = int(len(candles) * frac)
+        part = collect_fade_trades(candles[:cut], **base)
+        # **保有できる上限(horizon)ぶんの足が残っていない取引は、
+        # 打ち切った側では最初から評価されない。**先読みではなく
+        # 道具の都合なので、そこは比較から外す。外さないと建玉の枠が
+        # 空いて別の取引が入り、順番ごとずれる。
+        done = [t for t in full if t.fill_index + 240 < cut]
+        assert done, frac
+        by = {(t.bar_index, t.fill_index): t for t in part}
+        for t in done:
+            u = by.get((t.bar_index, t.fill_index))
+            assert u is not None, (frac, t.bar_index)
+            assert abs(u.r_multiple - t.r_multiple) < 1e-9, (frac, t.bar_index)
+            assert u.bars_held == t.bars_held
+            assert abs(u.stop - t.stop) < 1e-9
