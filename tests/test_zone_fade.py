@@ -1202,3 +1202,57 @@ def test_the_trend_filter_leaves_the_break_side_alone():
     a = collect_fade_trades(candles, **common)
     b = collect_fade_trades(candles, **common, skip_against_trend=True)
     assert a and [t.entry for t in a] == [t.entry for t in b]
+
+
+# --- 約定足の順行・逆行 ---------------------------------------------------
+
+
+def test_the_fill_bar_does_not_count_movement_from_before_the_fill():
+    """約定より前に付いた有利側の端を「順行した」と数えてはいけない。
+
+    売りは抵抗帯へ **下から登って** 約定する。その足の安値は普通、
+    登り始める前 = 建玉を持つ前に付いている。それを順行に数えると、
+    **持ってもいない建玉の含み益で建値へ損切りを動かす** ことになる。
+
+    実測(USD/JPY 開発用 5,595 件・建値 0.2 R): 生の足で数えると 97% が
+    約定足だけで発火するが、約定より後だけに絞ると 31% しか発火しない。
+    """
+    base = dict(horizon=24, zone_source="range", range_bars=120,
+                entry_at_zone_extreme=True, stop_buffer_atr=1.5)
+    loose = trades(**base, intrabar="stop_first")
+    tight = trades(**base, intrabar="no_same_bar_profit")
+    assert len(loose) == len(tight), "入り口は変わらない"
+    assert all(b.max_favourable_r <= a.max_favourable_r + 1e-9
+               for a, b in zip(loose, tight)), "絞ったほうが順行は小さいはず"
+    assert any(b.max_favourable_r < a.max_favourable_r - 1e-9
+               for a, b in zip(loose, tight)), "1 件も減らないなら効いていない"
+
+
+def test_the_fill_bar_keeps_the_adverse_side_whole():
+    """不利側は約定より後だと確かなので、絞っても縮まない。
+
+    指値を越えて進んだ先がその足の不利側の端なのだから、順序を問う
+    余地がない。ここまで削ると今度は損切りを過小評価する。
+    """
+    base = dict(horizon=24, zone_source="range", range_bars=120,
+                entry_at_zone_extreme=True, stop_buffer_atr=1.5)
+    loose = trades(**base, intrabar="stop_first")
+    tight = trades(**base, intrabar="no_same_bar_profit")
+    assert all(abs(a.max_adverse_r - b.max_adverse_r) < 1e-9
+               for a, b in zip(loose, tight))
+
+
+def test_moving_the_stop_to_breakeven_needs_movement_after_the_fill():
+    """建値へ動かす判定も、約定より後の値動きだけで行う。
+
+    約定足の順行を絞れば、建値へ動く建玉は減る。減らないなら、
+    動かす判定が古い(汚れた)順行を見ている。
+    """
+    base = dict(horizon=24, zone_source="range", range_bars=120,
+                entry_at_zone_extreme=True, stop_buffer_atr=1.5,
+                breakeven_at_r=0.2)
+    loose = trades(**base, intrabar="stop_first")
+    tight = trades(**base, intrabar="no_same_bar_profit")
+    moved_loose = sum(1 for t in loose if t.hit_stop and t.r_multiple > -0.5)
+    moved_tight = sum(1 for t in tight if t.hit_stop and t.r_multiple > -0.5)
+    assert moved_tight < moved_loose, (moved_loose, moved_tight)

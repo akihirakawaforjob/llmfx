@@ -753,9 +753,29 @@ def collect_fade_trades(
         up = opposite if long_side else stop
         down = stop if long_side else opposite
         be_done = False
+        # **約定足の逆行/順行は、高安をそのまま使ってはいけない。**
+        # 売りは抵抗帯へ下から登って約定するので、その足の安値は普通
+        # 登り始める前 = 約定より前に付いている。それを「有利に動いた」と
+        # 数えると、建玉を持つ前の値動きで建値へ損切りを動かすことになる。
+        #
+        # 確かなのは不利側だけ。指値を越えて進んだ先がその足の不利側の端
+        # なのだから、順序を問う余地がない。有利側は道順が要る。
+        fill_pts: list[float] | None = None
+        if intrabar == "no_same_bar_profit":
+            # 道順が無いので、約定より後だと確かなのは終値だけ。
+            hurt = forward[0].high if sign < 0 else forward[0].low
+            fill_pts = [limit, hurt, forward[0].close]
+        elif intrabar in ("ohlc", "path"):
+            fill_pts = _after_fill(bar_points(fill_at), limit, from_below)
+            if fill_pts is None:
+                fill_pts = [limit]
         for step, c in enumerate(forward):
-            fav = max((c.high - limit) * sign, (c.low - limit) * sign)
-            adv = -min((c.high - limit) * sign, (c.low - limit) * sign)
+            if step == 0 and fill_pts is not None:
+                fav = max((b - limit) * sign for b in fill_pts)
+                adv = -min((b - limit) * sign for b in fill_pts)
+            else:
+                fav = max((c.high - limit) * sign, (c.low - limit) * sign)
+                adv = -min((c.high - limit) * sign, (c.low - limit) * sign)
             best = max(best, fav)
             worst = max(worst, adv)
             if intrabar in ("stop_first", "no_same_bar_profit"):
