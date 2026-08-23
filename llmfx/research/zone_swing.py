@@ -130,6 +130,9 @@ def collect_swing_trades(
     structure_minutes: int = 60,
     higher_minutes: int | None = None,
     entry_signal: str = "exec",
+    zone_entry: str = "extreme",
+    zone_wait_bars: int = 24,
+    zone_entry_max_atr: float = 2.0,
     entry_fill: str = "level",
     entry_fallback: str = "structure",
     left: int = 3,
@@ -204,6 +207,8 @@ def collect_swing_trades(
         raise ValueError(f"fill_bar が不正: {fill_bar!r}")
     if reversal_signal not in ("both", "high_only"):
         raise ValueError(f"reversal_signal が不正: {reversal_signal!r}")
+    if zone_entry not in ("extreme", "exec_turn"):
+        raise ValueError(f"zone_entry が不正: {zone_entry!r}")
     if entry_signal not in ("exec", "structure"):
         raise ValueError(f"entry_signal が不正: {entry_signal!r}")
     if entry_fill not in ("level", "next_open"):
@@ -246,6 +251,7 @@ def collect_swing_trades(
     out: list[SwingLeg] = []
     positions: list[_Position] = []
     armed: dict[str, bool] = {"top": True, "bottom": True}
+    touched: dict[str, int | None] = {"top": None, "bottom": None}
     pid_seq = 0
     zone_hi: tuple[int, float] | None = None
     zone_lo: tuple[int, float] | None = None
@@ -537,8 +543,9 @@ def collect_swing_trades(
             # 両向きともマイナスなら、方向ではなく **仕掛けそのものが
             # 値を削っている**(= どこかにバグがある)ことになる。
             long_side = (key == "bottom") != reverse_entry
-            limit = (level - entry_beyond_atr * a if long_side
-                     else level + entry_beyond_atr * a)
+            # 「少し奥」は **帯の外側**。向きを裏返しても外側は外側。
+            limit = (level + entry_beyond_atr * a if key == "top"
+                     else level - entry_beyond_atr * a)
             # 離れたら次の待ち伏せを許す(同じ水準で連射しない)。
             # **基準は帯ではなく、注文を置いてある値段。**帯を基準にすると、
             # 奥へ置くほど「大きくヒゲを出して帯の近くへ戻った足」だけが
@@ -553,6 +560,57 @@ def collect_swing_trades(
             # 待ち伏せの解除は **連射を止めるためだけ** に使う。
             if not armed[key] or len(positions) >= max_open:
                 continue
+
+            if zone_entry == "exec_turn":
+                # **帯の最値に置いた指値は、抜けたときだけ約定する。**
+                # 跳ね返りを取りたいのに、届かずに見送るか、抜けてから
+                # 掴まされるかのどちらかになる(利用者の指摘)。
+                #
+                # 帯へ触れたら、そこから **執行の足が折り返すのを待って**
+                # 入る。ドテンや買い増しと同じ基準になり、一貫する。
+                if ((candle.high >= level) if key == "top"
+                        else (candle.low <= level)):
+                    touched[key] = i
+                if touched[key] is None or i - touched[key] > zone_wait_bars:
+                    continue
+                xg = ex["last_high"] if long_side else ex["last_low"]
+                if xg is None:
+                    continue
+                # **帯から離れすぎたら、もう帯で入る話ではない。**
+                # 執行の足の折り返しは帯と無関係に出るので、放っておくと
+                # 15 ATR 先の折り返しで約定して、損切りだけ帯に残る。
+                if (zone_entry_max_atr
+                        and abs(xg.price - level) > zone_entry_max_atr * a):
+                    continue
+                limit = xg.price
+                stop = (level - stop_buffer_atr * a if long_side
+                        else level + stop_buffer_atr * a)
+                probe = limit - (spread if long_side else 0.0)
+                prior = candles[i - 1].close if i else candle.open
+                reached = ((prior < probe and candle.high >= probe) if long_side
+                           else (prior > probe and candle.low <= probe))
+                if not reached:
+                    continue
+                at, px = i, limit
+                if entry_fill == "next_open" and i + 1 < len(candles):
+                    at, px = i + 1, candles[i + 1].open
+                risk = abs(stop - px)
+                if risk <= 0 or ((px <= stop) if long_side else (px >= stop)):
+                    continue
+                armed[key] = False
+                touched[key] = None
+                pid_seq += 1
+                base = st["last_low"] if long_side else st["last_high"]
+                positions.append(_Position(
+                    pid=pid_seq, long_side=long_side, stop=stop, atr=a,
+                    zone_price=level, zone_key=key,
+                    anchor=base.index if base is not None else -1,
+                    legs=[_Leg("zone", at, px, stop, risk, 1.0,
+                               base.price if base is not None else 0.0)]))
+                if stopped_on_fill_bar(positions[-1], at, px, long_side):
+                    positions.pop()
+                continue
+
             probe = limit - (spread if long_side else 0.0)
             # **触れ方は帯の側で決まる。**上端は高値で、下端は安値で触れる。
             # 向きを裏返しても、約定する足と値段は変えない。

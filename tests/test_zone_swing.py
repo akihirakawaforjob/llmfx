@@ -519,3 +519,51 @@ def test_skipping_the_fallback_takes_fewer_flips():
     a = len([t for t in take if t.kind == "flip"])
     b = len([t for t in skip if t.kind == "flip"])
     assert 0 < b < a, (a, b)
+
+
+def test_the_zone_entry_can_wait_for_the_execution_turn():
+    """帯の最値に置いた指値は、**抜けたときだけ約定する。**
+
+    跳ね返りを取りたいのに、届かずに見送るか、抜けてから掴まされるか
+    のどちらかになる(利用者の指摘)。帯へ触れてから執行の足が折り返す
+    のを待って入れば、ドテンや買い増しと同じ基準になり一貫する。
+    """
+    candles, ts = legs(zone_entry="exec_turn", max_flips=0, max_adds=0)
+    zone = [t for t in ts if t.kind == "zone"]
+    assert zone
+    for t in zone:
+        c = candles[t.entry_index]
+        # その足が付けた値段で約定している
+        assert c.low - 1e-9 <= t.entry <= c.high + 1e-9, t.entry_index
+    # **帯の最値ちょうどではない。**最値に置くと抜けたときだけ約定する。
+    at_edge = sum(abs(t.entry - t.zone_price) < 1e-9 for t in zone)
+    assert at_edge < len(zone) * 0.2, (at_edge, len(zone))
+    # **帯の近くで入っている。**執行の足の折り返しは帯と無関係に出るので、
+    # 上限を掛けないと 15 ATR 先で約定して損切りだけ帯に残る。
+    for t in zone:
+        assert abs(t.entry - t.zone_price) <= 2.0 * t.atr + 1e-9, \
+            (t.entry_index, abs(t.entry - t.zone_price) / t.atr)
+
+
+def test_the_zone_entry_still_anchors_its_stop_to_the_band():
+    """入り口が手前へ来ても、損切りは帯の外のまま。"""
+    _, ts = legs(zone_entry="exec_turn", stop_buffer_atr=1.5,
+                 max_flips=0, max_adds=0)
+    zone = [t for t in ts if t.kind == "zone"]
+    assert zone
+    for t in zone:
+        want = (t.zone_price - 1.5 * t.atr if t.long_side
+                else t.zone_price + 1.5 * t.atr)
+        assert t.stop_at_entry == pytest.approx(want, abs=1e-9), t.entry_index
+
+
+def test_waiting_longer_after_the_touch_lets_more_trades_through():
+    """帯へ触れてから待てる本数を延ばせば、拾える折り返しは増える。
+
+    触れた記録そのものは帯が動くと基準もずれるので、**件数の向き**で見る。
+    """
+    counts = [len([t for t in legs(zone_entry="exec_turn", zone_wait_bars=w,
+                                   max_flips=0, max_adds=0)[1]
+                   if t.kind == "zone"])
+              for w in (4, 48)]
+    assert counts[1] > counts[0], counts
