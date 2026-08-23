@@ -567,3 +567,50 @@ def test_waiting_longer_after_the_touch_lets_more_trades_through():
                    if t.kind == "zone"])
               for w in (4, 48)]
     assert counts[1] > counts[0], counts
+
+
+# --- 損切りの置き方(共通機構) --------------------------------------------
+
+
+def test_the_entry_basis_puts_the_stop_a_fixed_distance_from_the_fill():
+    """`entry` は約定値からの距離で置く。入り口がどこへ動いても幅は同じ。"""
+    _, ts = legs(zone_entry="exec_turn", stop_basis="entry",
+                 stop_buffer_atr=1.5, max_flips=0, max_adds=0)
+    zone = [t for t in ts if t.kind == "zone"]
+    assert zone
+    for t in zone:
+        assert t.risk / t.atr == pytest.approx(1.5, abs=1e-9), t.entry_index
+
+
+def test_the_wave_basis_scales_the_stop_with_the_approach_wave():
+    """`wave` は **直近の折り返しから帯までの長さ** に比例させる(利用者のやり方)。
+
+    倍率を上げれば損切りは広がる。
+    """
+    import statistics
+
+    def width(mult):
+        _, ts = legs(zone_entry="exec_turn", stop_basis="wave",
+                     stop_wave_mult=mult, max_flips=0, max_adds=0)
+        z = [t.risk / t.atr for t in ts if t.kind == "zone"]
+        assert z, mult
+        return statistics.mean(z)
+
+    # 倍率を動かすと拾える建玉も変わるので、隣どうしは揺れる。端で見る。
+    assert width(4.0) > width(0.25) * 2, (width(0.25), width(4.0))
+
+
+def test_the_floor_lifts_every_mechanism():
+    """下限は **帯もドテンも買い増しも** 通る。一箇所で効く。
+
+    掛けないと、入り口が帯の内側へ来たときに損切りが潰れ、そこは足の中の
+    順序の仮定だけで符号が変わる領域に入る(実測で risk<1.1 ATR の
+    4 分の 1 だけが +1.368 と -0.081 に割れた)。
+    """
+    for kw in ({"zone_entry": "exec_turn"}, {"zone_entry": "extreme"}):
+        _, tight = legs(**kw, max_flips=1, max_adds=1, min_stop_atr=1.5)
+        assert tight, kw
+        assert not [t for t in tight if t.risk / t.atr < 1.5 - 1e-9], kw
+    # 帯へ触れてから入る形では、掛けないと薄い脚ができる
+    _, loose = legs(zone_entry="exec_turn", max_flips=1, max_adds=1)
+    assert [t for t in loose if t.risk / t.atr < 1.5 - 1e-9]

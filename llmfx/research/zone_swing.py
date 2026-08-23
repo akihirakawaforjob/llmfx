@@ -96,6 +96,7 @@ class _Leg:
     risk: float
     size: float
     line_at_entry: float = 0.0
+    atr: float = 0.0
     best: float = 0.0
     worst: float = 0.0
 
@@ -142,6 +143,9 @@ def collect_swing_trades(
     range_bars: int = 120,
     entry_beyond_atr: float = 0.0,
     stop_buffer_atr: float = 1.5,
+    stop_basis: str = "band",
+    stop_wave_mult: float = 1.0,
+    min_stop_atr: float = 0.0,
     swing_stop_buffer_atr: float = 0.0,
     reversal_signal: str = "both",
     max_flips: int = 1,
@@ -207,6 +211,8 @@ def collect_swing_trades(
         raise ValueError(f"fill_bar が不正: {fill_bar!r}")
     if reversal_signal not in ("both", "high_only"):
         raise ValueError(f"reversal_signal が不正: {reversal_signal!r}")
+    if stop_basis not in ("band", "entry", "wave"):
+        raise ValueError(f"stop_basis が不正: {stop_basis!r}")
     if zone_entry not in ("extreme", "exec_turn"):
         raise ValueError(f"zone_entry が不正: {zone_entry!r}")
     if entry_signal not in ("exec", "structure"):
@@ -284,6 +290,50 @@ def collect_swing_trades(
                 lo = (sw.index, sw.price)
         return hi, lo
 
+    def place_stop(entry: float, long_side: bool, a: float, *,
+                   band: float | None = None, wave_from: float | None = None,
+                   structural: float | None = None) -> float | None:
+        """損切りをどこへ置くか。**帯もドテンも買い増しも、ここを通す。**
+
+        利用者の指摘「帯・ドテン・買い増しが全部同じ基準になった → つまり
+        ここは共通機構に出来る。一つ直せば全部治る」。
+
+        | `stop_basis` | 置き方 |
+        | --- | --- |
+        | `band` | 帯(または構造の折り返し)から `stop_buffer_atr` ATR 外 |
+        | `entry` | **約定値から** `stop_buffer_atr` ATR 外 |
+        | `wave` | **付近の小さな波の大きさ** の `stop_wave_mult` 倍 |
+
+        `wave` は利用者のやり方:
+
+            付近の小さな波の大きさ(直近安値から帯までの長さ)を
+            参照して損切り位置を決めていた。
+
+        `min_stop_atr` は **約定値からの最小距離**。掛けないと、入り口が
+        帯の内側へ来たときに損切りが 5 pips まで潰れ、そこは足の中の
+        順序の仮定だけで符号が変わる領域に入る。
+        """
+        sign = -1.0 if long_side else 1.0
+        if structural is not None and stop_basis != "entry":
+            stop = structural
+        elif stop_basis == "entry" or band is None:
+            stop = entry + sign * stop_buffer_atr * a
+        elif stop_basis == "wave":
+            if wave_from is None:
+                return None
+            wave = abs(band - wave_from)
+            if wave <= 0:
+                return None
+            stop = band + sign * stop_wave_mult * wave
+        else:
+            stop = band + sign * stop_buffer_atr * a
+        if min_stop_atr:
+            floor = entry + sign * min_stop_atr * a
+            stop = min(stop, floor) if long_side else max(stop, floor)
+        if (stop >= entry) if long_side else (stop <= entry):
+            return None
+        return stop
+
     def stopped_on_fill_bar(pos: _Position, i: int, fill: float,
                             from_below: bool) -> bool:
         """約定した足の **残り** で損切りへ届いていないか。
@@ -322,7 +372,8 @@ def collect_swing_trades(
             out.append(SwingLeg(
                 kind=leg.kind, long_side=pos.long_side,
                 entry_index=leg.entry_index, entry=leg.entry,
-                stop_at_entry=leg.stop_at_entry, risk=leg.risk, atr=pos.atr,
+                stop_at_entry=leg.stop_at_entry, risk=leg.risk,
+                atr=leg.atr or pos.atr,
                 size=leg.size, exit_index=i, exit=price, r_multiple=r, why=why,
                 bars_held=i - leg.entry_index,
                 max_favourable_r=leg.best / leg.risk,
@@ -481,11 +532,13 @@ def collect_swing_trades(
                     prot = st["prev_low"] if nl else st["prev_high"]
                     if prot is None or latest is None:
                         continue
-                    stop = (prot.price - swing_stop_buffer_atr * a if nl
-                            else prot.price + swing_stop_buffer_atr * a)
-                    risk = abs(px - stop)
-                    if risk <= 0 or ((px <= stop) if nl else (px >= stop)):
+                    structural = (prot.price - swing_stop_buffer_atr * a if nl
+                                  else prot.price + swing_stop_buffer_atr * a)
+                    stop = place_stop(px, nl, a, band=latest.price,
+                                      wave_from=prot.price, structural=structural)
+                    if stop is None:
                         continue
+                    risk = abs(px - stop)
                     pid_seq += 1
                     positions.append(_Position(
                         pid=pid_seq, long_side=nl, stop=stop, atr=a,
@@ -494,7 +547,7 @@ def collect_swing_trades(
                         # **乗り換えに使った折り返しでは買い増ししない。**
                         add_swing=(source, rev.index),
                         legs=[_Leg("flip", at, px, stop, risk, 1.0,
-                                   latest.price)]))
+                                   latest.price, a)]))
                     if stopped_on_fill_bar(positions[-1], at, px, nl):
                         positions.pop()
                 continue
@@ -518,14 +571,21 @@ def collect_swing_trades(
                         at, px = i, line
                         if entry_fill == "next_open" and i + 1 < len(candles):
                             at, px = i + 1, candles[i + 1].open
-                        risk = abs(px - pos.stop)
-                        if risk > 0 and ((px > pos.stop) if pos.long_side
-                                         else (px < pos.stop)):
+                        # 買い増しは建玉の損切りを共有する。**下限だけ掛ける。**
+                        astop = pos.stop
+                        if min_stop_atr:
+                            sg2 = -1.0 if pos.long_side else 1.0
+                            floor = px + sg2 * min_stop_atr * a
+                            astop = (min(astop, floor) if pos.long_side
+                                     else max(astop, floor))
+                        risk = abs(px - astop)
+                        if risk > 0 and ((px > astop) if pos.long_side
+                                         else (px < astop)):
                             rev0 = (st["last_low"] if pos.long_side
                                     else st["last_high"])
-                            pos.legs.append(_Leg("add", at, px, pos.stop, risk,
+                            pos.legs.append(_Leg("add", at, px, astop, risk,
                                                  add_size,
-                                                 rev0.price if rev0 else 0.0))
+                                                 rev0.price if rev0 else 0.0, a))
                             pos.adds += 1
                             pos.add_swing = (source, go.index)
                             if stopped_on_fill_bar(pos, at, px, pos.long_side):
@@ -583,8 +643,6 @@ def collect_swing_trades(
                         and abs(xg.price - level) > zone_entry_max_atr * a):
                     continue
                 limit = xg.price
-                stop = (level - stop_buffer_atr * a if long_side
-                        else level + stop_buffer_atr * a)
                 probe = limit - (spread if long_side else 0.0)
                 prior = candles[i - 1].close if i else candle.open
                 reached = ((prior < probe and candle.high >= probe) if long_side
@@ -594,9 +652,13 @@ def collect_swing_trades(
                 at, px = i, limit
                 if entry_fill == "next_open" and i + 1 < len(candles):
                     at, px = i + 1, candles[i + 1].open
-                risk = abs(stop - px)
-                if risk <= 0 or ((px <= stop) if long_side else (px >= stop)):
+                # 波の大きさ = 直近の折り返しから帯まで(利用者のやり方)
+                wref = ex["last_low"] if key == "top" else ex["last_high"]
+                stop = place_stop(px, long_side, a, band=level,
+                                  wave_from=wref.price if wref else None)
+                if stop is None:
                     continue
+                risk = abs(stop - px)
                 armed[key] = False
                 touched[key] = None
                 pid_seq += 1
@@ -606,7 +668,7 @@ def collect_swing_trades(
                     zone_price=level, zone_key=key,
                     anchor=base.index if base is not None else -1,
                     legs=[_Leg("zone", at, px, stop, risk, 1.0,
-                               base.price if base is not None else 0.0)]))
+                               base.price if base is not None else 0.0, a)]))
                 if stopped_on_fill_bar(positions[-1], at, px, long_side):
                     positions.pop()
                 continue
@@ -627,11 +689,13 @@ def collect_swing_trades(
                 reached = prior < probe and candle.high >= probe
             if not reached:
                 continue
-            stop = (limit - stop_buffer_atr * a if long_side
-                    else limit + stop_buffer_atr * a)
-            risk = abs(stop - limit)
-            if risk <= 0:
+            wref = ex["last_low"] if key == "top" else ex["last_high"]
+            # 奥へずらしたぶんも含めて、**置いた指値そのもの** を基準にする。
+            stop = place_stop(limit, long_side, a, band=limit,
+                              wave_from=wref.price if wref else None)
+            if stop is None:
                 continue
+            risk = abs(stop - limit)
             armed[key] = False
             pid_seq += 1
             base = st["last_low"] if long_side else st["last_high"]
@@ -640,7 +704,7 @@ def collect_swing_trades(
                 zone_price=level, zone_key=key,
                 anchor=base.index if base is not None else -1,
                 legs=[_Leg("zone", i, limit, stop, risk, 1.0,
-                       base.price if base is not None else 0.0)]))
+                       base.price if base is not None else 0.0, a)]))
             if stopped_on_fill_bar(positions[-1], i, limit, key == "top"):
                 positions.pop()
 
