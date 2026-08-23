@@ -1256,3 +1256,42 @@ def test_moving_the_stop_to_breakeven_needs_movement_after_the_fill():
     moved_loose = sum(1 for t in loose if t.hit_stop and t.r_multiple > -0.5)
     moved_tight = sum(1 for t in tight if t.hit_stop and t.r_multiple > -0.5)
     assert moved_tight < moved_loose, (moved_loose, moved_tight)
+
+
+# --- 弾いた足を見てから乗る ------------------------------------------------
+
+
+def test_the_rejection_entry_waits_for_the_bar_to_close():
+    """弾いた足の **次の足の始値** で乗る。その足の中では乗らない。
+
+    足が引ける前に「弾いた」と判定できてしまうと、先読みになる。
+    """
+    base = dict(horizon=24, zone_source="range", range_bars=120,
+                entry_at_zone_extreme=True, stop_buffer_atr=1.5,
+                intrabar="ohlc")
+    ts = trades(**base, edge_mode="rejection")
+    assert ts
+    assert all(t.fill_index > t.bar_index for t in ts), "その足では乗らない"
+
+
+def test_a_stronger_wick_is_a_stricter_filter():
+    """要求するヒゲを大きくするほど、件数は減る。"""
+    base = dict(horizon=24, zone_source="range", range_bars=120,
+                entry_at_zone_extreme=True, stop_buffer_atr=1.5,
+                intrabar="ohlc", edge_mode="rejection")
+    counts = [len(trades(**base, rejection_wick_atr=w)) for w in (0.0, 0.5, 1.5)]
+    assert counts[0] >= counts[1] >= counts[2], counts
+    assert counts[2] < counts[0], counts
+
+
+def test_the_rejection_entry_takes_the_fade_side():
+    """跳ね返りに乗るので、下から来た帯では売り。"""
+    base = dict(horizon=24, zone_source="range", range_bars=120,
+                entry_at_zone_extreme=True, stop_buffer_atr=1.5,
+                intrabar="ohlc", edge_mode="rejection")
+    for t in trades(**base):
+        assert t.long_side is not t.from_below
+        if t.from_below:
+            assert t.stop > t.entry, "売りなら損切りは上"
+        else:
+            assert t.stop < t.entry, "買いなら損切りは下"

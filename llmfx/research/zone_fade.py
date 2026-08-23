@@ -286,6 +286,7 @@ def collect_fade_trades(
     arm_within_atr: float = 0.0,
     drop_broken_edges: bool = False,
     min_rejection_atr: float = 0.0,
+    rejection_wick_atr: float = 0.0,
     skip_against_trend: bool = False,
     max_tries_per_zone: int = 0,
     breakeven_at_r: float = 0.0,
@@ -450,6 +451,19 @@ def collect_fade_trades(
     同じ水準で負け続ける形を止める。数え直すのは、その帯が一度死んで
     新しく折り返し直したとき。
 
+    `edge_mode="rejection"` は **弾いた足を見てから乗る**。利用者の説明:
+
+        抵抗帯に触れた時のローソク足の跳ね上がりを見たらもうエントリー
+        していることもあった。体感的にはその時の方がまだ + を取れていた。
+
+    帯へ届き、そのまま押し戻されて引けた足の **次の足の始値** で成行。
+    `rejection_wick_atr` はその足のヒゲ(売りなら 高値 - 終値)の最小値。
+
+    指値との違いは 3 つ。**価格は必ず悪くなる**(もう戻っている)、
+    **弾いたことは確かめてある**、そして **入りも成行なのでコストが往復
+    になる**。片道で数えると、この形だけ不当に良く出る。素の期待値を
+    0.03 R ほど改善しないと、指値の形より悪くなる計算。
+
     `min_rejection_atr` は **弾きの強さ** で帯を絞る。利用者の指摘:
 
         大口投資家はそんなに何回もポジションを変えないし、大枠で見て
@@ -604,7 +618,7 @@ def collect_fade_trades(
     entry_high, entry_low = _rolling_extremes(candles, entry_from_range_bars)
     if zone_source not in ("pivots", "range"):
         raise ValueError(f"zone_source が不正: {zone_source!r}")
-    if edge_mode not in ("fade", "break", "auto", "weakening"):
+    if edge_mode not in ("fade", "break", "auto", "weakening", "rejection"):
         raise ValueError(f"edge_mode が不正: {edge_mode!r}")
     if max_open < 1:
         raise ValueError("max_open は 1 以上")
@@ -1058,7 +1072,7 @@ def collect_fade_trades(
 
             # **流れに逆らう側では張らない。**高値も安値も切り上がって
             # いるのに上の帯で売ると、同じ水準で何度も刈られる。
-            if skip_against_trend and edge_mode == "fade":
+            if skip_against_trend and edge_mode in ("fade", "rejection"):
                 st_ = swing_state
                 up = (st_["prev_high"] is not None and st_["prev_low"] is not None
                       and st_["last_high"] > st_["prev_high"]
@@ -1123,30 +1137,58 @@ def collect_fade_trades(
                     edge = min(edge, r_lo[k_stop])
                 stop = edge - stop_buffer_atr * a
 
-            # 指値が約定するのは、価格がそこへ **届いた** ときだけ。
-            # 抜けた側を終値で確認する場合は、**確認できた次の足の始値**。
-            wait_close = take_break and break_confirm == "close"
-            level = limit + (break_confirm_atr * a if from_below
-                             else -break_confirm_atr * a)
-            fill_at = None
-            for j in range(i, min(i + max_wait_bars, len(candles))):
-                c = candles[j]
-                if blocked_hours_utc and c.time.hour in blocked_hours_utc:
+            if edge_mode == "rejection":
+                # **弾いた足を見てから乗る。**帯へ届き、そのまま押し戻されて
+                # 引けた足の **次の足の始値** で成行。利用者の言う
+                # 「抵抗帯に触れた時の跳ね上がりを見たらもうエントリー」。
+                #
+                # 指値と違い、価格は必ず悪くなる(もう戻っている)。
+                # **入りも成行なのでコストは往復で数えること。**片道で
+                # 数えると、この形だけ不当に良く出る。
+                if i + 1 >= len(candles) or a <= 0:
                     continue
-                if nfp_blackout_minutes and _near_nfp(c.time, nfp_blackout_minutes):
+                hit = ((candle.high >= zone.high) if from_below
+                       else (candle.low <= zone.low))
+                back = ((candle.close < zone.high) if from_below
+                        else (candle.close > zone.low))
+                wick = ((candle.high - candle.close) if from_below
+                        else (candle.close - candle.low))
+                if not (hit and back) or wick / a < rejection_wick_atr:
                     continue
-                if wait_close:
-                    if ((c.close >= level) if from_below else (c.close <= level)) \
-                            and j + 1 < len(candles):
-                        fill_at = j + 1
-                        limit = candles[j + 1].open
+                nxt = candles[i + 1]
+                if blocked_hours_utc and nxt.time.hour in blocked_hours_utc:
+                    continue
+                if nfp_blackout_minutes and _near_nfp(nxt.time, nfp_blackout_minutes):
+                    continue
+                fill_at, limit = i + 1, nxt.open
+                # 始値が既に損切りの向こう側なら、乗る前に負けている。
+                if (limit >= stop) if from_below else (limit <= stop):
+                    continue
+            else:
+                # 指値が約定するのは、価格がそこへ **届いた** ときだけ。
+                # 抜けた側を終値で確認する場合は、**確認できた次の足の始値**。
+                wait_close = take_break and break_confirm == "close"
+                level = limit + (break_confirm_atr * a if from_below
+                                 else -break_confirm_atr * a)
+                fill_at = None
+                for j in range(i, min(i + max_wait_bars, len(candles))):
+                    c = candles[j]
+                    if blocked_hours_utc and c.time.hour in blocked_hours_utc:
+                        continue
+                    if nfp_blackout_minutes and _near_nfp(c.time, nfp_blackout_minutes):
+                        continue
+                    if wait_close:
+                        if ((c.close >= level) if from_below else (c.close <= level)) \
+                                and j + 1 < len(candles):
+                            fill_at = j + 1
+                            limit = candles[j + 1].open
+                            break
+                    elif (c.high >= limit) if from_below else (c.low <= limit):
+                        fill_at = j
                         break
-                elif (c.high >= limit) if from_below else (c.low <= limit):
-                    fill_at = j
-                    break
-            if fill_at is None:
-                armed[key] = False
-                continue
+                if fill_at is None:
+                    armed[key] = False
+                    continue
 
             armed[key] = False
 
