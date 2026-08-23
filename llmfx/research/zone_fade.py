@@ -239,6 +239,13 @@ class FadeTrade:
     fill_index: int = -1
     """指値が約定した足。`bar_index`(帯に触れて指値を決めた足)とは別。"""
     opposite_price: float = 0.0
+    attempt: int = 1
+    """その端へ **何回目** に来て入ったか。1 が最初。
+
+    利用者の仮説「抵抗帯は触れられるほど脆くなるので、早いほど
+    有益」を、**帯の定義を変えずに** 確かめるための番号。
+    到達回数で帯そのものを作り替えると、別の戦略と比べることに
+    なる(勝率も平均勝ちも桁で変わる)。"""
     """建玉を持った時点で見ていた反対側の帯の縁。0 なら反対側が無かった。"""
     zone_low: float = 0.0
     zone_high: float = 0.0
@@ -743,7 +750,7 @@ def collect_fade_trades(
     cached_at = -10**9
 
     def _run_position(*, i, fill_at, limit, stop, risk, long_side, from_below,
-                      opposite, zone, width, a, weakening):
+                      opposite, zone, width, a, weakening, attempt=1):
         """約定してから決済までを回して 1 件にまとめる。
 
         **入り口が何であれ、ここを通す。**帯の端で待つ形と、押し負けで
@@ -861,6 +868,7 @@ def collect_fade_trades(
                 hit_stop=hit_stop,
                 bars_held=held,
                 long_side=long_side,
+                attempt=attempt,
                 defenders_weak=weakening,
                 entry_hour=candles[fill_at].time.hour,
                 why=why, exit_price=exit_price,
@@ -1192,17 +1200,17 @@ def collect_fade_trades(
 
             armed[key] = False
 
-            if max_tries_per_zone:
-                # **同じ水準で負け続ける形を止める。**数えるのは水準の値段
-                # ではなく、**その水準を作った折り返し**。帯は少しずつ動くので
-                # 値段で数えると同じものと見なせない。
-                t0 = zone.touches[0] if zone.touches else None
-                tkey = (t0 if isinstance(t0, int)
-                        else (id(zone) if t0 is None else t0.index))
-                n = tries.get(tkey, 0)
-                if n >= max_tries_per_zone:
-                    continue
-                tries[tkey] = n + 1
+            # **同じ水準へ何回目に来たか。**数えるのは水準の値段ではなく、
+            # **その水準を作った折り返し**。帯は少しずつ動くので値段で
+            # 数えると同じものと見なせない。
+            t0 = zone.touches[0] if zone.touches else None
+            tkey = (t0 if isinstance(t0, int)
+                    else (id(zone) if t0 is None else t0.index))
+            n = tries.get(tkey, 0)
+            if max_tries_per_zone and n >= max_tries_per_zone:
+                continue
+            tries[tkey] = n + 1
+            attempt = n + 1
 
             if take_break:
                 # 抜けた側に乗るなら、損切りは **帯の内側** へ戻る。
@@ -1249,7 +1257,7 @@ def collect_fade_trades(
                 i=i, fill_at=fill_at, limit=limit, stop=stop, risk=risk,
                 long_side=long_side, from_below=from_below,
                 opposite=opposite, zone=zone, width=width, a=a,
-                weakening=weakening,
+                weakening=weakening, attempt=attempt,
             )
             if t is None:
                 continue
