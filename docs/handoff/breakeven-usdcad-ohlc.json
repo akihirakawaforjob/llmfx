@@ -1,0 +1,30 @@
+{
+ "pair": "usdcad",
+ "intrabar": "ohlc",
+ "months": 234.6,
+ "bars": 455861,
+ "rows": [
+  {
+   "be": 0.0,
+   "n": 5873,
+   "gross": -0.0105,
+   "net": -0.0429,
+   "t": -1.02,
+   "win": 0.1211,
+   "avg_win": 7.135,
+   "lost_after_running": 0.49,
+   "rpm": -1.074
+  },
+  {
+   "be": 0.2,
+   "n": 5991,
+   "gross": 0.0552,
+   "net": 0.0227,
+   "t": 1.26,
+   "win": 0.0192,
+   "avg_win": 8.488,
+   "lost_after_running": 0.36,
+   "rpm": 0.58
+  }
+ ]
+}

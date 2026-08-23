@@ -1,0 +1,30 @@
+{
+ "pair": "usdjpy",
+ "intrabar": "stop_first",
+ "months": 235.0,
+ "bars": 475136,
+ "rows": [
+  {
+   "be": 0.0,
+   "n": 5512,
+   "gross": -0.0576,
+   "net": -0.0742,
+   "t": -1.84,
+   "win": 0.1199,
+   "avg_win": 6.837,
+   "lost_after_running": 0.48,
+   "rpm": -1.74
+  },
+  {
+   "be": 0.2,
+   "n": 5595,
+   "gross": 0.0406,
+   "net": 0.024,
+   "t": 1.34,
+   "win": 0.0223,
+   "avg_win": 7.513,
+   "lost_after_running": 0.359,
+   "rpm": 0.572
+  }
+ ]
+}

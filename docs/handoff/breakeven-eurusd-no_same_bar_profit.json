@@ -1,0 +1,30 @@
+{
+ "pair": "eurusd",
+ "intrabar": "no_same_bar_profit",
+ "months": 235.0,
+ "bars": 474663,
+ "rows": [
+  {
+   "be": 0.0,
+   "n": 5688,
+   "gross": -0.1037,
+   "net": -0.1219,
+   "t": -3.06,
+   "win": 0.1083,
+   "avg_win": 7.254,
+   "lost_after_running": 0.517,
+   "rpm": -2.95
+  },
+  {
+   "be": 0.2,
+   "n": 5779,
+   "gross": 0.021,
+   "net": 0.0028,
+   "t": 0.16,
+   "win": 0.0206,
+   "avg_win": 7.725,
+   "lost_after_running": 0.395,
+   "rpm": 0.069
+  }
+ ]
+}

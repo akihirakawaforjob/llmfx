@@ -1,0 +1,30 @@
+{
+ "pair": "usdchf",
+ "intrabar": "stop_first",
+ "months": 235.0,
+ "bars": 474013,
+ "rows": [
+  {
+   "be": 0.0,
+   "n": 5696,
+   "gross": -0.0197,
+   "net": -0.0467,
+   "t": -1.13,
+   "win": 0.1234,
+   "avg_win": 6.91,
+   "lost_after_running": 0.506,
+   "rpm": -1.131
+  },
+  {
+   "be": 0.2,
+   "n": 5784,
+   "gross": 0.0605,
+   "net": 0.0335,
+   "t": 1.8,
+   "win": 0.0213,
+   "avg_win": 8.014,
+   "lost_after_running": 0.388,
+   "rpm": 0.824
+  }
+ ]
+}

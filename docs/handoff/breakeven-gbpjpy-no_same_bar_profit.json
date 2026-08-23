@@ -1,0 +1,41 @@
+{
+ "pair": "gbpjpy",
+ "intrabar": "no_same_bar_profit",
+ "months": 212.0,
+ "bars": 434420,
+ "rows": [
+  {
+   "be": 0.0,
+   "n": 5231,
+   "gross": -0.0437,
+   "net": -0.0665,
+   "t": -1.63,
+   "win": 0.1287,
+   "avg_win": 6.408,
+   "lost_after_running": 0.479,
+   "rpm": -1.641
+  },
+  {
+   "be": 0.2,
+   "n": 5335,
+   "gross": 0.0841,
+   "net": 0.0613,
+   "t": 3.53,
+   "win": 0.0221,
+   "avg_win": 7.222,
+   "lost_after_running": 0.328,
+   "rpm": 1.542
+  },
+  {
+   "be": 0.3,
+   "n": 5335,
+   "gross": 0.0684,
+   "net": 0.0455,
+   "t": 2.61,
+   "win": 0.0221,
+   "avg_win": 7.222,
+   "lost_after_running": 0.335,
+   "rpm": 1.146
+  }
+ ]
+}

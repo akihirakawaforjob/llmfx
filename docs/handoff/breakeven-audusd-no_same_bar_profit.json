@@ -1,0 +1,30 @@
+{
+ "pair": "audusd",
+ "intrabar": "no_same_bar_profit",
+ "months": 234.8,
+ "bars": 449645,
+ "rows": [
+  {
+   "be": 0.0,
+   "n": 5995,
+   "gross": 0.0128,
+   "net": -0.0246,
+   "t": -0.6,
+   "win": 0.1209,
+   "avg_win": 7.33,
+   "lost_after_running": 0.494,
+   "rpm": -0.628
+  },
+  {
+   "be": 0.2,
+   "n": 6114,
+   "gross": 0.0941,
+   "net": 0.0566,
+   "t": 2.96,
+   "win": 0.0221,
+   "avg_win": 8.654,
+   "lost_after_running": 0.337,
+   "rpm": 1.472
+  }
+ ]
+}

@@ -1,0 +1,41 @@
+{
+ "pair": "eurjpy",
+ "intrabar": "no_same_bar_profit",
+ "months": 213.9,
+ "bars": 438594,
+ "rows": [
+  {
+   "be": 0.0,
+   "n": 5497,
+   "gross": -0.025,
+   "net": -0.049,
+   "t": -0.98,
+   "win": 0.1184,
+   "avg_win": 7.194,
+   "lost_after_running": 0.473,
+   "rpm": -1.259
+  },
+  {
+   "be": 0.2,
+   "n": 5608,
+   "gross": 0.0965,
+   "net": 0.0725,
+   "t": 2.15,
+   "win": 0.0178,
+   "avg_win": 10.354,
+   "lost_after_running": 0.32,
+   "rpm": 1.9
+  },
+  {
+   "be": 0.3,
+   "n": 5608,
+   "gross": 0.0824,
+   "net": 0.0583,
+   "t": 1.73,
+   "win": 0.0182,
+   "avg_win": 10.286,
+   "lost_after_running": 0.327,
+   "rpm": 1.529
+  }
+ ]
+}
