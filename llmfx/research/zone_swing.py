@@ -111,8 +111,8 @@ class _Position:
     flips: int = 0
     adds: int = 0
     legs: list[_Leg] = field(default_factory=list)
-    add_swing: int = -1
-    """買い増しに使った折り返しの足番号。同じ折り返しで二度足さない。"""
+    add_swing: tuple = ()
+    """買い増しに使った折り返し(どの足の、何本目か)。二度足さない。"""
 
     anchor: int = -1
     """約定した時点の、守る側の折り返しの足番号。
@@ -126,7 +126,12 @@ class _Position:
 def collect_swing_trades(
     candles: list[Candle],
     *,
-    higher_minutes: int = 60,
+    zone_minutes: int = 240,
+    structure_minutes: int = 60,
+    higher_minutes: int | None = None,
+    entry_signal: str = "exec",
+    entry_fill: str = "level",
+    entry_fallback: str = "structure",
     left: int = 3,
     right: int = 3,
     atr_period: int = 14,
@@ -199,25 +204,44 @@ def collect_swing_trades(
         raise ValueError(f"fill_bar が不正: {fill_bar!r}")
     if reversal_signal not in ("both", "high_only"):
         raise ValueError(f"reversal_signal が不正: {reversal_signal!r}")
+    if entry_signal not in ("exec", "structure"):
+        raise ValueError(f"entry_signal が不正: {entry_signal!r}")
+    if entry_fill not in ("level", "next_open"):
+        raise ValueError(f"entry_fill が不正: {entry_fill!r}")
+    if entry_fallback not in ("structure", "skip"):
+        raise ValueError(f"entry_fallback が不正: {entry_fallback!r}")
     if max_open < 1:
         raise ValueError("max_open は 1 以上")
-    if not candles or higher_minutes is None or higher_minutes <= 0:
+    if higher_minutes:                       # 旧来の 2 段。両方を同じ足にする
+        zone_minutes = structure_minutes = higher_minutes
+    if not candles or not zone_minutes or not structure_minutes:
         return []
+
+    from datetime import timedelta
 
     from ..data.resample import resample_candles
 
-    higher = resample_candles(candles, higher_minutes)
-    if len(higher) < max(range_bars, warmup // 4, left + right + 2):
+    zone_tf = resample_candles(candles, zone_minutes)
+    struct_tf = (zone_tf if structure_minutes == zone_minutes
+                 else resample_candles(candles, structure_minutes))
+    if len(zone_tf) < max(range_bars, left + right + 2):
+        return []
+    if len(struct_tf) < left + right + 2:
         return []
     atr_low = _atr_series(candles, atr_period)
 
-    det = SwingDetector(left=left, right=right, atr_period=atr_period,
-                        min_swing_atr=min_swing_atr)
-    from datetime import timedelta
+    def _det() -> SwingDetector:
+        return SwingDetector(left=left, right=right, atr_period=atr_period,
+                             min_swing_atr=min_swing_atr)
 
-    span = timedelta(minutes=higher_minutes)
-    hi_i = 0
-    hi_bar = -1
+    zdet = _det()                            # 帯を引く足の折り返し
+    sdet = zdet if struct_tf is zone_tf else _det()   # 構造の足
+    xdet = _det()                            # 執行の足(入り口の合図)
+
+    zone_span = timedelta(minutes=zone_minutes)
+    struct_span = timedelta(minutes=structure_minutes)
+    z_i, z_bar = 0, -1
+    s_i, s_bar = 0, -1
 
     out: list[SwingLeg] = []
     positions: list[_Position] = []
@@ -226,13 +250,13 @@ def collect_swing_trades(
     zone_hi: tuple[int, float] | None = None
     zone_lo: tuple[int, float] | None = None
 
-    def structure() -> dict:
+    def structure(d: SwingDetector) -> dict:
         """確定した高値・安値を新しい順に 2 本ずつ。"""
         return {
-            "last_high": det.nth_last_swing(SwingType.HIGH, 1),
-            "prev_high": det.nth_last_swing(SwingType.HIGH, 2),
-            "last_low": det.nth_last_swing(SwingType.LOW, 1),
-            "prev_low": det.nth_last_swing(SwingType.LOW, 2),
+            "last_high": d.nth_last_swing(SwingType.HIGH, 1),
+            "prev_high": d.nth_last_swing(SwingType.HIGH, 2),
+            "last_low": d.nth_last_swing(SwingType.LOW, 1),
+            "prev_low": d.nth_last_swing(SwingType.LOW, 2),
         }
 
     def window_edges(cut: int) -> tuple[tuple[int, float] | None,
@@ -244,7 +268,7 @@ def collect_swing_trades(
         ときの **置き換え** を取りこぼすので、毎回辿り直す。
         """
         hi = lo = None
-        for sw in reversed(det.swings):
+        for sw in reversed(zdet.swings):
             if sw.index < cut:
                 break
             if sw.type is SwingType.HIGH:
@@ -303,22 +327,36 @@ def collect_swing_trades(
         pos.legs = []
 
     for i, candle in enumerate(candles):
-        # --- 閉じた上位足だけを取り込む ---------------------------------
-        moved = False
-        while hi_i < len(higher) and higher[hi_i].time + span <= candle.time:
-            det.update(higher[hi_i])
-            hi_bar = hi_i
-            hi_i += 1
-            moved = True
-        if hi_bar < 0 or i < warmup:
+        # --- 閉じた足だけを取り込む。**足ごとに独立に進める。** ----------
+        z_moved = s_moved = False
+        while z_i < len(zone_tf) and zone_tf[z_i].time + zone_span <= candle.time:
+            zdet.update(zone_tf[z_i])
+            z_bar = z_i
+            z_i += 1
+            z_moved = True
+        if sdet is not zdet:
+            while (s_i < len(struct_tf)
+                   and struct_tf[s_i].time + struct_span <= candle.time):
+                sdet.update(struct_tf[s_i])
+                s_bar = s_i
+                s_i += 1
+                s_moved = True
+        else:
+            s_bar, s_moved = z_bar, z_moved
+        # 執行の足は 1 本前まで(その足自身の最値で判定すると循環する)。
+        if i:
+            xdet.update(candles[i - 1])
+        if z_bar < 0 or s_bar < 0 or i < warmup:
             continue
-        if moved:
-            zone_hi, zone_lo = window_edges(hi_bar - range_bars)
+        if z_moved:
+            zone_hi, zone_lo = window_edges(z_bar - range_bars)
 
         a = atr_low[i]
         if a <= 0:
             continue
-        st = structure()
+        st = structure(sdet)
+        ex = structure(xdet)
+        moved = s_moved
 
         # --- 損切りを「1 つ前」の折り返しへ引き上げる --------------------
         # **最新ではなく 1 つ前。**最新に置くと、トレンドが壊れていない
@@ -363,30 +401,47 @@ def collect_swing_trades(
             stop_hit = ((candle.low <= pos.stop) if pos.long_side
                         else (candle.high >= pos.stop - spread))
 
-            rev = st["last_low"] if pos.long_side else st["last_high"]
-            ok = rev is not None
-            if ok and reversal_signal == "both":
-                # 高値も切り下がって(切り上がって)いること。
-                if pos.long_side:
-                    ok = (st["last_high"] is not None and st["prev_high"] is not None
-                          and st["last_high"].price < st["prev_high"].price)
-                else:
-                    ok = (st["last_low"] is not None and st["prev_low"] is not None
-                          and st["last_low"].price > st["prev_low"].price)
-            rev_hit = False
-            line = 0.0
-            if ok:
-                line = rev.price
-                # **抜けたときだけ。**転換ラインは逆指値なので、価格が
-                # 既に向こう側にあるなら発動しない。ここを見ないと、帯で
-                # 建てた瞬間に「直近の高値へ届いている」ことになり、
-                # 建てた足でいきなり利益確定する。
+            def crossed_now(level: float, against: bool) -> bool:
+                """前の足の終値が向こう側にないこと + この足で届いたこと。
+
+                `against` は建玉に不利な向き(転換side)かどうか。
+                """
                 prior = candles[i - 1].close if i else candle.open
-                crossed = (prior > line) if pos.long_side else (prior < line)
-                rev_hit = crossed and ((candle.low <= line) if pos.long_side
-                                       else (candle.high >= line - spread))
+                down = pos.long_side if against else not pos.long_side
+                if down:
+                    return prior > level and candle.low <= level
+                return prior < level and candle.high >= level - spread
+
+            # --- 転換 -----------------------------------------------------
+            # **上位足(構造)が向きを変えたかで門を開け、執行の足の
+            # 折り返しで引き金を引く。**構造の水準まで待つと、そこへ
+            # 届くまでの値幅を丸ごと捨てる(利用者の指摘)。
+            gate = True
+            if reversal_signal == "both":
+                if pos.long_side:
+                    gate = (st["last_high"] is not None
+                            and st["prev_high"] is not None
+                            and st["last_high"].price < st["prev_high"].price)
+                else:
+                    gate = (st["last_low"] is not None
+                            and st["prev_low"] is not None
+                            and st["last_low"].price > st["prev_low"].price)
+            picks: list[tuple[float, str, object]] = []
+            if gate:
+                if entry_signal == "exec":
+                    xr = ex["last_low"] if pos.long_side else ex["last_high"]
+                    if xr is not None and crossed_now(xr.price, True):
+                        picks.append((xr.price, "exec", xr))
+                sr = st["last_low"] if pos.long_side else st["last_high"]
+                if sr is not None and crossed_now(sr.price, True):
+                    picks.append((sr.price, "structure", sr))
+            rev_hit = bool(picks)
+            line, source, rev = 0.0, "", None
+            if rev_hit:
+                # 手前にあるほうが先に着く。買いは高いほう、売りは低いほう。
+                line, source, rev = (max(picks, key=lambda z: z[0]) if pos.long_side
+                                     else min(picks, key=lambda z: z[0]))
             if stop_hit and rev_hit:
-                # 近いほうが先。売りは低いほう、買いは高いほう。
                 rev_first = ((line > pos.stop) if pos.long_side
                              else (line < pos.stop))
                 stop_hit = not rev_first
@@ -398,17 +453,23 @@ def collect_swing_trades(
                 continue
 
             if rev_hit:
-                close_position(pos, i, line, "reversal", 0.0)
+                at, px = i, line
+                if entry_fill == "next_open" and i + 1 < len(candles):
+                    # **水準では約定させない。**その足は丸ごと約定より後に
+                    # なるので、足の中の順序を問う余地が消える。価格は悪くなる。
+                    at, px = i + 1, candles[i + 1].open
+                close_position(pos, at, px, "reversal", 0.0)
                 positions.remove(pos)
+                # 執行の足が折り返さないまま構造の水準まで走った場合、
+                # そこで乗るか見送るか。どちらが良いかは測って決める。
+                if source == "structure" and entry_fallback == "skip":
+                    continue
                 if pos.flips < max_flips:
                     # ドテン。損切りは **1 つ前** の折り返しの外側。
                     #
                     # **ここを「最新」に置いていた。**乗り換えた側にとっての
                     # ダウ転換も同じ水準を割ることなので、損切りと利確が
                     # 同じ値段になり、**利確側の出口が消えていた。**
-                    # 遅れて動く損切りだけが収入源になり、実測でもドテン
-                    # だけが向きに関係なくマイナスだった(順 -0.037 /
-                    # 逆 -0.052)。帯から入った建玉と同じ形へ揃える。
                     nl = not pos.long_side
                     latest = st["last_low"] if nl else st["last_high"]
                     prot = st["prev_low"] if nl else st["prev_high"]
@@ -416,8 +477,8 @@ def collect_swing_trades(
                         continue
                     stop = (prot.price - swing_stop_buffer_atr * a if nl
                             else prot.price + swing_stop_buffer_atr * a)
-                    risk = abs(line - stop)
-                    if risk <= 0 or ((line <= stop) if nl else (line >= stop)):
+                    risk = abs(px - stop)
+                    if risk <= 0 or ((px <= stop) if nl else (px >= stop)):
                         continue
                     pid_seq += 1
                     positions.append(_Position(
@@ -425,35 +486,43 @@ def collect_swing_trades(
                         zone_price=pos.zone_price, zone_key=pos.zone_key,
                         flips=pos.flips + 1, anchor=latest.index,
                         # **乗り換えに使った折り返しでは買い増ししない。**
-                        # 同じ水準・同じ足で 2 枚持つことになる。
-                        add_swing=rev.index,
-                        legs=[_Leg("flip", i, line, stop, risk, 1.0,
+                        add_swing=(source, rev.index),
+                        legs=[_Leg("flip", at, px, stop, risk, 1.0,
                                    latest.price)]))
-                    if stopped_on_fill_bar(positions[-1], i, line, nl):
+                    if stopped_on_fill_bar(positions[-1], at, px, nl):
                         positions.pop()
                 continue
 
-            # 3. 買い増し。**流れが続く側の折り返しを抜けたら足す。**
+            # --- 買い増し。**流れが続く側の折り返しを抜けたら足す。** ------
             if pos.adds < max_adds:
-                go = st["last_high"] if pos.long_side else st["last_low"]
-                if go is not None and go.index != pos.add_swing:
-                    line = go.price
-                    # 買い増しも同じ。抜けたときだけ足す。
-                    prior = candles[i - 1].close if i else candle.open
-                    crossed = (prior < line) if pos.long_side else (prior > line)
-                    reached = crossed and ((candle.high >= line - spread)
-                                           if pos.long_side
-                                           else (candle.low <= line))
-                    if reached:
-                        risk = abs(line - pos.stop)
-                        if risk > 0:
-                            rev0 = st["last_low"] if pos.long_side else st["last_high"]
-                            pos.legs.append(_Leg("add", i, line, pos.stop, risk,
+                picks = []
+                if entry_signal == "exec":
+                    xg = ex["last_high"] if pos.long_side else ex["last_low"]
+                    if xg is not None and crossed_now(xg.price, False):
+                        picks.append((xg.price, "exec", xg))
+                sg = st["last_high"] if pos.long_side else st["last_low"]
+                if sg is not None and crossed_now(sg.price, False):
+                    picks.append((sg.price, "structure", sg))
+                picks = [z for z in picks if (z[1], z[2].index) != pos.add_swing]
+                if picks:
+                    line, source, go = (min(picks, key=lambda z: z[0])
+                                        if pos.long_side
+                                        else max(picks, key=lambda z: z[0]))
+                    if not (source == "structure" and entry_fallback == "skip"):
+                        at, px = i, line
+                        if entry_fill == "next_open" and i + 1 < len(candles):
+                            at, px = i + 1, candles[i + 1].open
+                        risk = abs(px - pos.stop)
+                        if risk > 0 and ((px > pos.stop) if pos.long_side
+                                         else (px < pos.stop)):
+                            rev0 = (st["last_low"] if pos.long_side
+                                    else st["last_high"])
+                            pos.legs.append(_Leg("add", at, px, pos.stop, risk,
                                                  add_size,
                                                  rev0.price if rev0 else 0.0))
                             pos.adds += 1
-                            pos.add_swing = go.index
-                            if stopped_on_fill_bar(pos, i, line, pos.long_side):
+                            pos.add_swing = (source, go.index)
+                            if stopped_on_fill_bar(pos, at, px, pos.long_side):
                                 positions.remove(pos)
 
         # --- 新しく帯へ置いた指値 ---------------------------------------

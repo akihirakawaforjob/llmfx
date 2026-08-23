@@ -454,3 +454,68 @@ def test_the_fill_bar_assumption_brackets_a_tight_stop():
     assert tight[1] > tight[0], tight
     # 損切りが広ければ、どちらの仮定でもほとんど変わらない
     assert (tight[1] - tight[0]) > (wide[1] - wide[0]), (tight, wide)
+
+
+# --- 足を三段にする -------------------------------------------------------
+
+
+def test_the_three_timeframes_are_independent():
+    """帯・構造・執行を別々の足で回せる。"""
+    _, wide = legs(zone_minutes=240, structure_minutes=60)
+    _, same = legs(zone_minutes=60, structure_minutes=60)
+    assert wide and same
+    assert len(wide) != len(same), (len(wide), len(same))
+
+
+def test_higher_minutes_still_gives_the_old_two_rung_form():
+    """旧来の呼び方は、帯と構造を同じ足にした形に落ちる。"""
+    _, a = legs(higher_minutes=60, entry_signal="structure")
+    _, b = legs(zone_minutes=60, structure_minutes=60, entry_signal="structure")
+    assert len(a) == len(b)
+    assert all(abs(x.r_multiple - y.r_multiple) < 1e-12 for x, y in zip(a, b))
+
+
+def test_entering_on_the_execution_turn_fires_earlier():
+    """執行の足の折り返しは、構造の水準より **手前** にあるので先に着く。
+
+    構造の水準まで待つと、そこへ届くまでの値幅を丸ごと捨てる
+    (利用者の指摘)。執行の足で引くと、転換での決済が増え、
+    建玉を持っている時間が短くなる。
+
+    **副作用がひとつある。**損切りは構造の足に預けたままなので、
+    早く入るほど損切りが遠い。合成足では risk/ATR の中央が
+    8.7 → 14.2 になった。R で測れば分母が伸びるだけだが、
+    「負けても今より少なく済む」とは限らない。**そこは実測で見る。**
+    """
+    import statistics
+
+    def look(mode):
+        _, ts = legs(entry_signal=mode, max_flips=2, max_adds=0)
+        z = [t for t in ts if t.kind == "zone"]
+        assert z, mode
+        return (sum(t.why == "reversal" for t in ts),
+                statistics.median([t.bars_held for t in z]))
+
+    rev_s, hold_s = look("structure")
+    rev_x, hold_x = look("exec")
+    assert rev_x > rev_s, (rev_s, rev_x)
+    assert hold_x <= hold_s, (hold_s, hold_x)
+
+
+def test_next_open_fills_at_the_next_bar_open():
+    """水準で約定させない形は、次の足の始値ちょうどで入る。"""
+    candles, ts = legs(entry_fill="next_open", max_flips=2, max_adds=2)
+    later = [t for t in ts if t.kind in ("flip", "add")]
+    assert later
+    for t in later:
+        assert t.entry == pytest.approx(candles[t.entry_index].open, abs=1e-9), \
+            t.entry_index
+
+
+def test_skipping_the_fallback_takes_fewer_flips():
+    """執行の足が折り返さないまま走った場合に見送ると、ドテンは減る。"""
+    _, take = legs(entry_fallback="structure", max_flips=2)
+    _, skip = legs(entry_fallback="skip", max_flips=2)
+    a = len([t for t in take if t.kind == "flip"])
+    b = len([t for t in skip if t.kind == "flip"])
+    assert 0 < b < a, (a, b)
