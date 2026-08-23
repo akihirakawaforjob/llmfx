@@ -294,6 +294,8 @@ def collect_fade_trades(
     drop_broken_edges: bool = False,
     min_rejection_atr: float = 0.0,
     rejection_wick_atr: float = 0.0,
+    spread: float = 0.0,
+    slippage: float = 0.0,
     skip_against_trend: bool = False,
     max_tries_per_zone: int = 0,
     breakeven_at_r: float = 0.0,
@@ -457,6 +459,31 @@ def collect_fade_trades(
     `max_tries_per_zone` は **同じ帯で何回まで試すか**(0 で無制限)。
     同じ水準で負け続ける形を止める。数え直すのは、その帯が一度死んで
     新しく折り返し直したとき。
+
+    `spread` と `slippage` は **価格** で渡す(pips ではない)。0 なら
+    従来どおり素の値が返るので、集計側で R から差し引く形になる。
+
+    **渡すと、コストは差し引きではなく「発動位置のずれ」として入る。**
+    利用者の確認:
+
+        指値で約定させたものの損切り位置はスプレッドでズレる分を
+        考慮しているよな。でないと、数 pips 動いただけで損切される
+        というバカげた状態になってしまう。
+
+    足は Bid。売りは Bid で売り、買い戻しは Ask なので:
+
+    | | 買い | 売り |
+    | --- | --- | --- |
+    | 入る | Ask を払う。Bid が **スプレッドぶん余計に** 動いて初めて届く | Bid で売る。そのまま |
+    | 損切り | Bid で発動。そのまま | Ask で発動。**スプレッドぶん手前で刺さる** |
+    | 含み損益 | そのまま | **スプレッドぶん不利** |
+
+    どちらの向きも **スプレッドを 1 回だけ払う**が、払う場所が違う。
+    定額を引く形と平均では近いが、**建値へ動かす閾値がスプレッドと
+    同じ桁のときは結果が変わる**。この手法はまさにそこに乗っている。
+
+    **`spread` を渡したら、集計側で二重にコストを引かないこと。**
+    返る `r_multiple` は既に差引後。
 
     `edge_mode="rejection"` は **弾いた足を見てから乗る**。利用者の説明:
 
@@ -774,6 +801,10 @@ def collect_fade_trades(
         up = opposite if long_side else stop
         down = stop if long_side else opposite
         be_done = False
+        # **売りの決済は Ask で起きる。**足は Bid なので、売りの損切りも
+        # 反対側の帯も **スプレッドのぶん手前で発動する**。買いは逆に、
+        # 入るほうが手前になる(そちらは約定の判定側で引いてある)。
+        shift = spread if not long_side else 0.0
         # **約定足の逆行/順行は、高安をそのまま使ってはいけない。**
         # 売りは抵抗帯へ下から登って約定するので、その足の安値は普通
         # 登り始める前 = 約定より前に付いている。それを「有利に動いた」と
@@ -791,24 +822,27 @@ def collect_fade_trades(
             if fill_pts is None:
                 fill_pts = [limit]
         for step, c in enumerate(forward):
+            # 含み損益で測る。売りは Ask で買い戻すので、順行は
+            # スプレッドのぶん小さく、逆行はそのぶん大きい。
             if step == 0 and fill_pts is not None:
-                fav = max((b - limit) * sign for b in fill_pts)
-                adv = -min((b - limit) * sign for b in fill_pts)
+                fav = max((b - limit) * sign for b in fill_pts) - shift
+                adv = -min((b - limit) * sign for b in fill_pts) + shift
             else:
-                fav = max((c.high - limit) * sign, (c.low - limit) * sign)
-                adv = -min((c.high - limit) * sign, (c.low - limit) * sign)
+                fav = max((c.high - limit) * sign, (c.low - limit) * sign) - shift
+                adv = -min((c.high - limit) * sign, (c.low - limit) * sign) + shift
             best = max(best, fav)
             worst = max(worst, adv)
             if intrabar in ("stop_first", "no_same_bar_profit"):
                 # 損切りは高安で判定する。同じ足で有利にも動いていても、
                 # 順序が分からない以上こちらを先に見る。
-                touched = (c.low <= stop) if long_side else (c.high >= stop)
+                touched = ((c.low <= stop) if long_side
+                           else (c.high >= stop - shift))
                 first = "stop" if touched else None
                 if first is None and opposite is not None and (
                     intrabar == "stop_first" or step > 0
                 ):
                     reached = ((c.high >= opposite) if long_side
-                               else (c.low <= opposite))
+                               else (c.low <= opposite - shift))
                     first = "opp" if reached else None
             else:
                 points = bar_points(fill_at + step)
@@ -820,7 +854,9 @@ def collect_fade_trades(
                     points = after
                 else:
                     points = [forward[step - 1].close, *points]
-                side = _reach(points, up, down)
+                side = _reach(points,
+                              None if up is None else up - shift,
+                              None if down is None else down - shift)
                 first = None
                 if side == ("down" if long_side else "up"):
                     first = "stop"
@@ -831,7 +867,7 @@ def collect_fade_trades(
                 held = step
                 # **建値へ動かしていれば -1 R ではない。**動かした後の
                 # 損切り位置から計算する。
-                result = (stop - limit) * sign / risk
+                result = ((stop - limit) * sign - slippage) / risk
                 why, exit_price = "stop", stop
                 break
             if first == "opp":
@@ -849,7 +885,8 @@ def collect_fade_trades(
                 down = stop if long_side else opposite
                 be_done = True
         if not hit_stop and why == "time":
-            result = (forward[-1].close - limit) * sign / risk
+            # 時間切れは成行。売りは Ask で買い戻すのでスプレッドが乗る。
+            result = ((forward[-1].close - limit) * sign - shift - slippage) / risk
             exit_price = forward[-1].close
 
         return FadeTrade(
@@ -1168,7 +1205,10 @@ def collect_fade_trades(
                     continue
                 if nfp_blackout_minutes and _near_nfp(nxt.time, nfp_blackout_minutes):
                     continue
-                fill_at, limit = i + 1, nxt.open
+                # 成行。買いは Ask を払い、売りは Bid で売る。滑りは両方に乗る。
+                fill_at = i + 1
+                limit = (nxt.open + spread + slippage if long_side
+                         else nxt.open - slippage)
                 # 始値が既に損切りの向こう側なら、乗る前に負けている。
                 if (limit >= stop) if from_below else (limit <= stop):
                     continue
@@ -1179,6 +1219,11 @@ def collect_fade_trades(
                 level = limit + (break_confirm_atr * a if from_below
                                  else -break_confirm_atr * a)
                 fill_at = None
+                # **買いは Ask で約定する。**足は Bid なので、買いの指値は
+                # Bid がスプレッドのぶん余計に下がって初めて届く。売りは
+                # Bid で売るのでそのまま。逆選択はここで決まるので、
+                # 緩めてはいけない。
+                probe = limit - (spread if long_side else 0.0)
                 for j in range(i, min(i + max_wait_bars, len(candles))):
                     c = candles[j]
                     if blocked_hours_utc and c.time.hour in blocked_hours_utc:
@@ -1189,9 +1234,10 @@ def collect_fade_trades(
                         if ((c.close >= level) if from_below else (c.close <= level)) \
                                 and j + 1 < len(candles):
                             fill_at = j + 1
-                            limit = candles[j + 1].open
+                            limit = (candles[j + 1].open + spread + slippage
+                                     if long_side else candles[j + 1].open - slippage)
                             break
-                    elif (c.high >= limit) if from_below else (c.low <= limit):
+                    elif (c.high >= probe) if from_below else (c.low <= probe):
                         fill_at = j
                         break
                 if fill_at is None:

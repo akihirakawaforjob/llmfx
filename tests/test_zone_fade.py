@@ -1329,3 +1329,53 @@ def test_the_rejection_entry_has_no_lookahead():
             assert abs(u.r_multiple - t.r_multiple) < 1e-9, (frac, t.bar_index)
             assert u.bars_held == t.bars_held
             assert abs(u.stop - t.stop) < 1e-9
+
+
+# --- スプレッドは発動位置のずれとして入る ---------------------------------
+
+
+def _spread_base(**extra):
+    return dict(horizon=24, zone_source="range", range_bars=120,
+                entry_at_zone_extreme=True, stop_buffer_atr=1.5,
+                intrabar="ohlc", **extra)
+
+
+def test_the_spread_makes_the_short_stop_fire_earlier():
+    """売りの損切りは Ask で発動するので、Bid が届く前に刺さる。
+
+    足は Bid。スプレッドを渡すと、売りだけ損切りが増えるはず。
+    定額を引くだけでは、この「刺さりやすさ」が入らない。
+    """
+    free = trades(**_spread_base())
+    wide = trades(**_spread_base(spread=0.02))
+    a = [t for t in free if not t.long_side]
+    b = [t for t in wide if not t.long_side]
+    assert a and b
+    assert sum(t.hit_stop for t in b) / len(b) > sum(t.hit_stop for t in a) / len(a)
+
+
+def test_the_spread_makes_the_long_limit_harder_to_fill():
+    """買いの指値は Ask で約定するので、Bid が余計に下がらないと届かない。"""
+    free = [t for t in trades(**_spread_base()) if t.long_side]
+    wide = [t for t in trades(**_spread_base(spread=0.02)) if t.long_side]
+    assert len(wide) < len(free), (len(free), len(wide))
+
+
+def test_a_breakeven_exit_costs_only_slippage():
+    """建値へ動かした損切りで切れたら、損益はほぼ 0。
+
+    Bid で売って Ask で買い戻すので、**建値まで戻る前**に刺さる。
+    スプレッドはそこで払っていて、損益そのものは 0 になる。
+    ここを -スプレッドにすると二重に払うことになる。
+    """
+    ts = trades(**_spread_base(spread=0.02, breakeven_at_r=0.05))
+    flat = [t for t in ts if t.hit_stop and abs(t.r_multiple) < 1e-9]
+    assert flat, "建値で切れた建玉が無いと確かめられない"
+
+
+def test_zero_spread_keeps_the_old_numbers():
+    """既定(0)では従来どおり。集計側で差し引く形が壊れていない。"""
+    a = trades(**_spread_base())
+    b = trades(**_spread_base(spread=0.0, slippage=0.0))
+    assert len(a) == len(b)
+    assert all(abs(x.r_multiple - y.r_multiple) < 1e-12 for x, y in zip(a, b))
