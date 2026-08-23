@@ -1,0 +1,52 @@
+{
+ "pair": "audjpy",
+ "intrabar": "ohlc",
+ "months": 208.3,
+ "bars": 406078,
+ "rows": [
+  {
+   "be": 0.05,
+   "n": 5348,
+   "gross": 0.0217,
+   "net": -0.0107,
+   "t": -0.53,
+   "win": 0.026,
+   "avg_win": 7.514,
+   "lost_after_running": 0.197,
+   "rpm": -0.274
+  },
+  {
+   "be": 0.1,
+   "n": 5348,
+   "gross": 0.0275,
+   "net": -0.0048,
+   "t": -0.23,
+   "win": 0.0284,
+   "avg_win": 7.528,
+   "lost_after_running": 0.209,
+   "rpm": -0.124
+  },
+  {
+   "be": 0.15,
+   "n": 5348,
+   "gross": 0.0194,
+   "net": -0.0129,
+   "t": -0.6,
+   "win": 0.0297,
+   "avg_win": 7.47,
+   "lost_after_running": 0.218,
+   "rpm": -0.332
+  },
+  {
+   "be": 0.25,
+   "n": 5348,
+   "gross": 0.0092,
+   "net": -0.0231,
+   "t": -1.02,
+   "win": 0.0338,
+   "avg_win": 7.357,
+   "lost_after_running": 0.241,
+   "rpm": -0.594
+  }
+ ]
+}

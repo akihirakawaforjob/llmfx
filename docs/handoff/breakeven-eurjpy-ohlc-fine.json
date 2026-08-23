@@ -1,0 +1,52 @@
+{
+ "pair": "eurjpy",
+ "intrabar": "ohlc",
+ "months": 213.9,
+ "bars": 438594,
+ "rows": [
+  {
+   "be": 0.05,
+   "n": 5608,
+   "gross": 0.0172,
+   "net": -0.0069,
+   "t": -0.19,
+   "win": 0.0241,
+   "avg_win": 9.644,
+   "lost_after_running": 0.207,
+   "rpm": -0.18
+  },
+  {
+   "be": 0.1,
+   "n": 5608,
+   "gross": 0.0131,
+   "net": -0.011,
+   "t": -0.31,
+   "win": 0.0259,
+   "avg_win": 9.543,
+   "lost_after_running": 0.218,
+   "rpm": -0.287
+  },
+  {
+   "be": 0.15,
+   "n": 5608,
+   "gross": 0.0075,
+   "net": -0.0166,
+   "t": -0.46,
+   "win": 0.0269,
+   "avg_win": 9.483,
+   "lost_after_running": 0.226,
+   "rpm": -0.435
+  },
+  {
+   "be": 0.25,
+   "n": 5608,
+   "gross": 0.0035,
+   "net": -0.0205,
+   "t": -0.56,
+   "win": 0.0312,
+   "avg_win": 9.173,
+   "lost_after_running": 0.249,
+   "rpm": -0.538
+  }
+ ]
+}

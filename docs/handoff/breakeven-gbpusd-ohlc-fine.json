@@ -1,0 +1,52 @@
+{
+ "pair": "gbpusd",
+ "intrabar": "ohlc",
+ "months": 235.0,
+ "bars": 474103,
+ "rows": [
+  {
+   "be": 0.05,
+   "n": 5949,
+   "gross": 0.0094,
+   "net": -0.0137,
+   "t": -0.59,
+   "win": 0.0311,
+   "avg_win": 8.339,
+   "lost_after_running": 0.215,
+   "rpm": -0.346
+  },
+  {
+   "be": 0.1,
+   "n": 5949,
+   "gross": 0.0129,
+   "net": -0.0102,
+   "t": -0.42,
+   "win": 0.0328,
+   "avg_win": 8.458,
+   "lost_after_running": 0.224,
+   "rpm": -0.257
+  },
+  {
+   "be": 0.15,
+   "n": 5949,
+   "gross": 0.0144,
+   "net": -0.0087,
+   "t": -0.35,
+   "win": 0.0343,
+   "avg_win": 8.539,
+   "lost_after_running": 0.233,
+   "rpm": -0.22
+  },
+  {
+   "be": 0.25,
+   "n": 5949,
+   "gross": 0.0058,
+   "net": -0.0173,
+   "t": -0.67,
+   "win": 0.037,
+   "avg_win": 8.485,
+   "lost_after_running": 0.252,
+   "rpm": -0.437
+  }
+ ]
+}

@@ -1,0 +1,52 @@
+{
+ "pair": "audusd",
+ "intrabar": "ohlc",
+ "months": 234.8,
+ "bars": 449645,
+ "rows": [
+  {
+   "be": 0.05,
+   "n": 6114,
+   "gross": 0.0245,
+   "net": -0.0131,
+   "t": -0.62,
+   "win": 0.0283,
+   "avg_win": 8.315,
+   "lost_after_running": 0.217,
+   "rpm": -0.34
+  },
+  {
+   "be": 0.1,
+   "n": 6114,
+   "gross": 0.0218,
+   "net": -0.0158,
+   "t": -0.72,
+   "win": 0.0294,
+   "avg_win": 8.365,
+   "lost_after_running": 0.224,
+   "rpm": -0.41
+  },
+  {
+   "be": 0.15,
+   "n": 6114,
+   "gross": 0.0216,
+   "net": -0.0159,
+   "t": -0.7,
+   "win": 0.0314,
+   "avg_win": 8.419,
+   "lost_after_running": 0.235,
+   "rpm": -0.413
+  },
+  {
+   "be": 0.25,
+   "n": 6114,
+   "gross": 0.0161,
+   "net": -0.0214,
+   "t": -0.9,
+   "win": 0.0342,
+   "avg_win": 8.512,
+   "lost_after_running": 0.258,
+   "rpm": -0.558
+  }
+ ]
+}
