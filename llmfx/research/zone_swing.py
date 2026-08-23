@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 
 from ..domain.swings import SwingDetector
 from ..domain.types import Candle, SwingType
-from .zone_fade import _atr_series
+from .zone_fade import _after_fill, _atr_series, _bar_path
 
 
 @dataclass
@@ -69,6 +69,10 @@ class SwingLeg:
     max_adverse_r: float
     position_id: int
     zone_price: float
+    zone_key: str
+    """`top`(抵抗帯)か `bottom`(支持帯)か。帯のどちら側から来たかで
+    足の中の道順が変わるので、後から確かめるのに要る。"""
+
     flips: int
     """その建玉が何回ドテンした後か。0 が最初。"""
 
@@ -233,6 +237,29 @@ def collect_swing_trades(
                 lo = (sw.index, sw.price)
         return hi, lo
 
+    def stopped_on_fill_bar(pos: _Position, i: int, fill: float,
+                            from_below: bool) -> bool:
+        """約定した足の **残り** で損切りへ届いていないか。
+
+        建玉を翌足からしか見ないと、**損切りが狭いほど「同じ足で切られた
+        はずの負け」を見逃す。**実測で損切りを 1.5 → 0.3 ATR と詰めると
+        期待値が +0.067 → +0.801、平均勝ちが +4.50 → +22.49 R になった。
+        分母が縮んだのではなく、負けが消えていた。
+
+        足の中の道順は四本値からは分からないので、他所と同じ推し量り方
+        (陽線 始値→安値→高値→終値)で解く。**約定より前の値動きは
+        使わない。**
+        """
+        pts = _after_fill(_bar_path(candles[i]), fill, from_below)
+        if not pts:
+            return False
+        hit = (min(pts) <= pos.stop if pos.long_side
+               else max(pts) >= pos.stop - spread)
+        if not hit:
+            return False
+        close_position(pos, i, pos.stop, "stop", slippage)
+        return True
+
     def close_position(pos: _Position, i: int, price: float, why: str,
                        slip: float) -> None:
         sign = 1.0 if pos.long_side else -1.0
@@ -247,7 +274,7 @@ def collect_swing_trades(
                 max_favourable_r=leg.best / leg.risk,
                 max_adverse_r=leg.worst / leg.risk,
                 position_id=pos.pid, zone_price=pos.zone_price,
-                flips=pos.flips, adds=pos.adds))
+                zone_key=pos.zone_key, flips=pos.flips, adds=pos.adds))
         pos.legs = []
 
     for i, candle in enumerate(candles):
@@ -368,6 +395,8 @@ def collect_swing_trades(
                         # 同じ水準・同じ足で 2 枚持つことになる。
                         add_swing=rev.index,
                         legs=[_Leg("flip", i, line, stop, risk, 1.0)]))
+                    if stopped_on_fill_bar(positions[-1], i, line, nl):
+                        positions.pop()
                 continue
 
             # 3. 買い増し。**流れが続く側の折り返しを抜けたら足す。**
@@ -388,6 +417,8 @@ def collect_swing_trades(
                                                  add_size))
                             pos.adds += 1
                             pos.add_swing = go.index
+                            if stopped_on_fill_bar(pos, i, line, pos.long_side):
+                                positions.remove(pos)
 
         # --- 新しく帯へ置いた指値 ---------------------------------------
         if blocked_hours_utc and candle.time.hour in blocked_hours_utc:
@@ -446,6 +477,8 @@ def collect_swing_trades(
                 zone_price=level, zone_key=key,
                 anchor=base.index if base is not None else -1,
                 legs=[_Leg("zone", i, limit, stop, risk, 1.0)]))
+            if stopped_on_fill_bar(positions[-1], i, limit, key == "top"):
+                positions.pop()
 
     # --- 終端。**残った建玉は成行で閉じ、印を付けて分けて数える。** ------
     last = len(candles) - 1

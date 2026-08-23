@@ -341,3 +341,58 @@ def test_the_order_stays_live_even_when_price_is_far_away():
                 assert prior > t.entry - 1e-9, (rearm, t.entry_index)
             else:
                 assert prior < t.entry + 1e-9, (rearm, t.entry_index)
+
+
+def test_a_tight_stop_can_be_hit_on_the_fill_bar():
+    """約定した足の残りで損切りへ届いたら、その足で切れる。
+
+    建玉を翌足からしか見ないと、**損切りが狭いほど「同じ足で切られた
+    はずの負け」を見逃す。**実測で 1.5 → 0.3 ATR と詰めると期待値が
+    +0.067 → +0.801、平均勝ちが +4.50 → +22.49 R になった。分母が
+    縮んだのではなく、負けが消えていた。
+    """
+    _, tight = legs(stop_buffer_atr=0.3, max_flips=0, max_adds=0)
+    _, wide = legs(stop_buffer_atr=1.5, max_flips=0, max_adds=0)
+    assert tight and wide
+    same = sum(1 for t in tight if t.bars_held == 0 and t.why == "stop")
+    assert same > 0, "狭い損切りなら約定足で切れる建玉があるはず"
+    # 狭くするほど、約定足で切れる割合は増える
+    a = same / len(tight)
+    b = sum(1 for t in wide if t.bars_held == 0 and t.why == "stop") / len(wide)
+    assert a > b, (a, b)
+
+
+def test_the_fill_bar_check_ignores_what_happened_before_the_fill():
+    """約定より前の値動きで切ってはいけない。
+
+    順序は他所と同じ推し量り方(陽線 始値→安値→高値→終値)で解く。
+    買いの逆指値は上げの途中で約定するので、その足の安値は普通
+    **約定より前**に付いている。それで切ると、持ってもいない建玉を
+    損切りしたことになる。
+    """
+    candles, ts = legs(stop_buffer_atr=0.3, max_flips=0, max_adds=0)
+    checked = 0
+    for t in ts:
+        if t.bars_held or t.why != "stop":
+            continue
+        c = candles[t.entry_index]
+        # **どちらから来たかは帯の側で決まる。**上端へは下から登って
+        # 触れ、下端へは上から下りて触れる。
+        from_below = t.zone_key == "top"
+        if from_below and c.close >= c.open:
+            # 陽線(始値→安値→高値→終値)を下から抜けて約定したなら、
+            # 約定より後に残るのは 高値 と 終値 だけ。**安値は使えない。**
+            checked += 1
+            lo = min(c.high, c.close)
+            hurt = lo if t.long_side else max(c.high, c.close)
+            ok = (hurt <= t.stop_at_entry + 1e-9 if t.long_side
+                  else hurt >= t.stop_at_entry - 1e-9)
+            assert ok, (t.entry_index, t.zone_key, c.close, t.stop_at_entry)
+        if not from_below and c.close < c.open:
+            # 陰線(始値→高値→安値→終値)を上から下りて約定した場合も同じ。
+            checked += 1
+            hurt = min(c.low, c.close) if t.long_side else max(c.low, c.close)
+            ok = (hurt <= t.stop_at_entry + 1e-9 if t.long_side
+                  else hurt >= t.stop_at_entry - 1e-9)
+            assert ok, (t.entry_index, t.zone_key, c.close, t.stop_at_entry)
+    assert checked, "確かめる建玉が無い"
