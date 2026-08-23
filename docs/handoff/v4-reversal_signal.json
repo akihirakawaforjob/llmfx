@@ -1,0 +1,91 @@
+{
+ "axis": "転換の合図",
+ "key": "reversal_signal",
+ "base": {
+  "higher_minutes": 60,
+  "range_bars": 120,
+  "entry_beyond_atr": 0.0,
+  "stop_buffer_atr": 1.5,
+  "swing_stop_buffer_atr": 0.0,
+  "reversal_signal": "both",
+  "max_flips": 1,
+  "max_adds": 0,
+  "max_open": 4,
+  "blocked_hours_utc": [
+   21,
+   22
+  ]
+ },
+ "rows": [
+  {
+   "value": "both",
+   "by_kind": {
+    "zone": {
+     "n": 23399,
+     "win": 0.1749,
+     "avg_win": 2.055,
+     "avg_loss": -0.698,
+     "r": -0.2166,
+     "t": -19.24,
+     "rpm": -22.13,
+     "pos": "0/4"
+    },
+    "flip": {
+     "n": 7218,
+     "win": 0.3026,
+     "avg_win": 1.467,
+     "avg_loss": -0.738,
+     "r": -0.0705,
+     "t": -4.17,
+     "rpm": -2.17,
+     "pos": "0/4"
+    },
+    "ALL": {
+     "n": 30617,
+     "win": 0.205,
+     "avg_win": 1.85,
+     "avg_loss": -0.706,
+     "r": -0.1822,
+     "t": -19.2,
+     "rpm": -24.3,
+     "pos": "0/4"
+    }
+   }
+  },
+  {
+   "value": "high_only",
+   "by_kind": {
+    "zone": {
+     "n": 23509,
+     "win": 0.1783,
+     "avg_win": 1.75,
+     "avg_loss": -0.651,
+     "r": -0.2229,
+     "t": -22.26,
+     "rpm": -22.89,
+     "pos": "0/4"
+    },
+    "flip": {
+     "n": 9443,
+     "win": 0.3055,
+     "avg_win": 1.155,
+     "avg_loss": -0.609,
+     "r": -0.0699,
+     "t": -5.81,
+     "rpm": -2.81,
+     "pos": "0/4"
+    },
+    "ALL": {
+     "n": 32952,
+     "win": 0.2148,
+     "avg_win": 1.507,
+     "avg_loss": -0.64,
+     "r": -0.1791,
+     "t": -22.54,
+     "rpm": -25.7,
+     "pos": "0/4"
+    }
+   }
+  }
+ ]
+}

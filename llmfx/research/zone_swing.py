@@ -382,8 +382,12 @@ def collect_swing_trades(
             long_side = key == "bottom"
             limit = (level - entry_beyond_atr * a if long_side
                      else level + entry_beyond_atr * a)
-            # 帯から離れたら次の待ち伏せを許す(同じ水準で連射しない)。
-            if abs(candle.close - level) > rearm_atr * a:
+            # 離れたら次の待ち伏せを許す(同じ水準で連射しない)。
+            # **基準は帯ではなく、注文を置いてある値段。**帯を基準にすると、
+            # 奥へ置くほど「大きくヒゲを出して帯の近くへ戻った足」だけが
+            # 選別される。狙って作った選別ではないので、そこで成績が
+            # 上がっても機構の手柄ではない。
+            if abs(candle.close - limit) > rearm_atr * a:
                 armed[key] = True
                 continue
             if not armed[key] or len(positions) >= max_open:

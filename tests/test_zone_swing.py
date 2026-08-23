@@ -208,11 +208,21 @@ def test_there_is_no_time_exit():
     assert max(t.bars_held for t in ts) > 240, "240 本で切られていないこと"
 
 
-def test_placing_the_limit_further_out_fills_less_often():
-    """帯の奥へ置くほど届かない。逆選択はここで決まるので消さない。"""
-    counts = [len([t for t in legs(entry_beyond_atr=o)[1] if t.kind == "zone"])
-              for o in (0.0, 1.5)]
-    assert counts[1] < counts[0], counts
+def test_the_limit_sits_exactly_where_it_was_placed():
+    """指値は帯の最値から指定した ATR ぶんだけ外側。約定値はその値ちょうど。
+
+    **件数で確かめてはいけない。**注文は置きっぱなしで、約定したら
+    そこから離れるまで次を張らないだけなので、奥へ置いても件数は
+    ほとんど動かない(帯そのものが更新されていくため)。
+    """
+    for off in (0.0, 0.5, 1.5):
+        _, ts = legs(entry_beyond_atr=off)
+        zone = [t for t in ts if t.kind == "zone"]
+        assert zone, off
+        for t in zone:
+            want = (t.zone_price - off * t.atr if t.long_side
+                    else t.zone_price + off * t.atr)
+            assert t.entry == pytest.approx(want, abs=1e-9), (off, t.entry_index)
 
 
 def test_a_reversal_only_fires_when_price_crosses_the_line():
@@ -244,3 +254,21 @@ def test_an_add_only_fires_when_price_crosses_the_line():
             assert prior < t.entry, (t.entry_index, prior, t.entry)
         else:
             assert prior > t.entry, (t.entry_index, prior, t.entry)
+
+
+def test_the_rearm_distance_is_measured_from_the_order_not_the_zone():
+    """待ち伏せの解除は、注文を置いてある値段からの距離で測る。
+
+    帯からの距離で測ると、指値を奥へ置くほど「大きくヒゲを出して帯の
+    近くへ戻った足」だけが約定するようになる。**狙って作った選別では
+    ないので、そこで成績が上がっても機構の手柄ではない。**実測では
+    奥 2.0 ATR で +0.946 R(t=+14.2)という数字が出た。
+    """
+    for off in (0.0, 1.0, 2.0):
+        candles, ts = legs(entry_beyond_atr=off, rearm_atr=1.0)
+        zone = [t for t in ts if t.kind == "zone"]
+        assert zone, off
+        for t in zone:
+            c = candles[t.entry_index]
+            # 約定した足の終値は、注文からの再武装の距離の内側にあるはず。
+            assert abs(c.close - t.entry) <= 1.0 * t.atr + 1e-9, (off, t.entry_index)
