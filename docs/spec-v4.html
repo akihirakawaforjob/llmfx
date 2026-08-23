@@ -609,6 +609,9 @@ const cv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim(
 const txt=(o,s)=>{const t=el("text",o);t.textContent=s;return t;};
 
 function draw(box, lg, cands, levels, marks, opt){
+  // **枠が無ければ黙って帰る。**節を差し替えたときに呼び出しだけ残ると、
+  // ここで例外になり **以降の図が全部止まる**(実際に止めた)。
+  if(!box || !cands || !cands.length) return;
   opt=opt||{};
   const n=cands.length, step=Math.max(11,Math.min(19,880/n));
   const padL=10,padR=136,padT=30,padB=22;
@@ -847,38 +850,6 @@ for (const [id, key, sell] of [["cs","cs",true], ["cb","cb",false]]) {
            {c:"--good",t:"転換ライン(利確側)"}]});
 }
 
-// --- 指値の位置(H1 の目線) ---------------------------------------------
-{
-  const f = F.where;
-  draw(document.getElementById("c-where"), document.getElementById("l-where"),
-    f.candles,
-    [{y:f.band, c:"--zone", t:"抵抗帯", w:2.5},
-     {y:f.now, c:"--stop", t:"いま: 帯の端そのもの", w:2, dash:"3 4"},
-     {y:f.m5, c:"--be", t:"M5 の転換で入るとこのあたり", w:2.6}],
-    [{i:f.now_at, y:f.now, kind:"entry", down:true, c:"--stop", t:"いま"},
-     {i:f.m5_at, y:f.m5, kind:"entry", down:true, c:"--be", t:"M5 で入ると"}],
-    {h:320, alt:"帯の端に置いた指値と、M5 の転換で入る位置の差",
-     keys:[{c:"--zone",t:"抵抗帯"},
-           {c:"--stop",t:"いま: 帯の端(実際より良い価格)",dash:1},
-           {c:"--be",t:"M5 の転換で入る位置"}]});
-}
-// --- M5 の入り口 3 候補 ---------------------------------------------------
-{
-  const f = F.m5;
-  draw(document.getElementById("c-m5"), document.getElementById("l-m5"), f.candles,
-    [{y:f.band, c:"--zone", t:"抵抗帯(H1)", w:2.5},
-     {y:f.a, c:"--good", t:"① M5 の戻り高値", w:2.4, dash:"5 4"},
-     {y:f.b, c:"--warn", t:"② 押し安値を割る水準", w:2.4, dash:"5 4"},
-     {y:f.c, c:"--be", t:"③ ②の次の M5 始値", w:2.6}],
-    [{i:f.a_at, y:f.a, kind:"entry", down:true, c:"--good", t:"①"},
-     {i:f.b_at, y:f.b, kind:"entry", down:true, c:"--warn", t:"②"},
-     {i:f.c_at, y:f.c, kind:"ghost", c:"--be", t:"③ ここだけ順序が決まる"}],
-    {swings:f.swings, h:340,
-     alt:"M5 でダウ転換したときの、入り口の候補3つ",
-     keys:[{c:"--zone",t:"抵抗帯"},{c:"--good",t:"① 戻り高値(水準)",dash:1},
-           {c:"--warn",t:"② 転換の確定水準(水準)",dash:1},
-           {c:"--be",t:"③ 次の足の始値(決まる)"}]});
-}
 
 // --- ドテン/買い増しを下位足の折り返しで入る -----------------------------
 {
