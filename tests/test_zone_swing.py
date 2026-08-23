@@ -256,22 +256,32 @@ def test_an_add_only_fires_when_price_crosses_the_line():
             assert prior > t.entry, (t.entry_index, prior, t.entry)
 
 
-def test_the_rearm_distance_is_measured_from_the_order_not_the_zone():
-    """待ち伏せの解除は、注文を置いてある値段からの距離で測る。
+def test_the_rearm_distance_only_spaces_out_re_entries():
+    """待ち伏せの解除は **連射を止めるためだけ**。約定の窓ではない。
 
-    帯からの距離で測ると、指値を奥へ置くほど「大きくヒゲを出して帯の
-    近くへ戻った足」だけが約定するようになる。**狙って作った選別では
-    ないので、そこで成績が上がっても機構の手柄ではない。**実測では
-    奥 2.0 ATR で +0.946 R(t=+14.2)という数字が出た。
+    「注文の近くで引けた足でしか約定しない」にすると、大きな足で届いた
+    のに見送る挙動が混ざり、距離を広げるほど選別が効いたように見える
+    (実測で 0.5 / 1.0 / 2.0 ATR が +0.036 / +0.132 / +0.400 になった)。
+
+    正しくは、**一度約定したらそこから離れるまで次を張らない**だけ。
     """
-    for off in (0.0, 1.0, 2.0):
-        candles, ts = legs(entry_beyond_atr=off, rearm_atr=1.0)
-        zone = [t for t in ts if t.kind == "zone"]
-        assert zone, off
-        for t in zone:
-            c = candles[t.entry_index]
-            # 約定した足の終値は、注文からの再武装の距離の内側にあるはず。
-            assert abs(c.close - t.entry) <= 1.0 * t.atr + 1e-9, (off, t.entry_index)
+    import statistics
+
+    def spacing(rearm):
+        candles, ts = legs(rearm_atr=rearm)
+        gaps = []
+        for key in (True, False):
+            same = sorted([t for t in ts if t.kind == "zone" and t.long_side == key],
+                          key=lambda t: t.entry_index)
+            for a, b in zip(same, same[1:]):
+                gaps.append(max(abs(c.close - a.entry) / a.atr
+                                for c in candles[a.entry_index:b.entry_index + 1]))
+        return statistics.median(gaps)
+
+    near, far = spacing(0.5), spacing(2.0)
+    # 距離を広げれば、次を張るまでに price はより大きく離れている。
+    assert far > near * 1.5, (near, far)
+    assert far >= 2.0 - 1e-9, far
 
 
 def test_the_nearer_level_is_reached_first():
@@ -306,3 +316,28 @@ def test_the_mirror_control_takes_the_same_fills_the_other_way():
     assert len(shared) > len(a) * 0.5, (len(a), len(b), len(shared))
     for k in shared:
         assert a[k].long_side is not b[k].long_side, k
+
+
+def test_the_order_stays_live_even_when_price_is_far_away():
+    """離れているあいだも注文は置いてある。**届けば約定する。**
+
+    「近いときだけ約定を見る」にすると、大きな足で届いたのに見送る
+    挙動が混ざり、再武装の距離を広げるほど選別が効いたように見える。
+    実測で 0.5 / 1.0 / 2.0 ATR が +0.036 / +0.132 / +0.400 になった。
+
+    再武装の距離を変えても、**約定した足はどれも注文へ届いている**。
+    """
+    for rearm in (0.5, 1.0, 2.0):
+        candles, ts = legs(rearm_atr=rearm)
+        zone = [t for t in ts if t.kind == "zone"]
+        assert zone, rearm
+        for t in zone:
+            c = candles[t.entry_index]
+            # **その足が実際に付けた値段でしか約定しない。**
+            assert c.low - 1e-9 <= t.entry <= c.high + 1e-9, (rearm, t.entry_index)
+            # 指値は市場のこちら側に置く。前の足の終値は向こう側にない。
+            prior = candles[t.entry_index - 1].close
+            if t.long_side:
+                assert prior > t.entry - 1e-9, (rearm, t.entry_index)
+            else:
+                assert prior < t.entry + 1e-9, (rearm, t.entry_index)

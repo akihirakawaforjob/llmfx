@@ -410,14 +410,27 @@ def collect_swing_trades(
             # 上がっても機構の手柄ではない。
             if abs(candle.close - limit) > rearm_atr * a:
                 armed[key] = True
-                continue
+            # **離れているあいだも注文は置いてある。**ここで「近いときだけ
+            # 見る」にすると、大きな足で届いたのに見送る挙動が混ざり、
+            # 再武装の距離を広げるほど選別が効いたように見える(実測で
+            # 0.5/1.0/2.0 ATR が +0.036/+0.132/+0.400 になった)。
+            # 待ち伏せの解除は **連射を止めるためだけ** に使う。
             if not armed[key] or len(positions) >= max_open:
                 continue
             probe = limit - (spread if long_side else 0.0)
             # **触れ方は帯の側で決まる。**上端は高値で、下端は安値で触れる。
             # 向きを裏返しても、約定する足と値段は変えない。
-            reached = ((candle.low <= probe) if key == "bottom"
-                       else (candle.high >= probe))
+            #
+            # **そこへ来たときだけ約定する。**指値は市場のこちら側に置く
+            # ものなので、前の足の終値が既に向こう側にあるなら、その注文は
+            # とっくに約定しているか、そもそも置けない。ここを見ないと
+            # **その足が一度も付けていない値段で約定する**(実測で
+            # 123.4 の足が 131.2 で約定し、-16 R を計上していた)。
+            prior = candles[i - 1].close if i else candle.open
+            if key == "bottom":
+                reached = prior > probe and candle.low <= probe
+            else:
+                reached = prior < probe and candle.high >= probe
             if not reached:
                 continue
             stop = (limit - stop_buffer_atr * a if long_side
