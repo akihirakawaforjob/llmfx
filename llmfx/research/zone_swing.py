@@ -129,6 +129,7 @@ def collect_swing_trades(
     add_size: float = 1.0,
     max_open: int = 4,
     rearm_atr: float = 1.0,
+    reverse_entry: bool = False,
     blocked_hours_utc: frozenset[int] | None = None,
     spread: float = 0.0,
     slippage: float = 0.0,
@@ -299,15 +300,17 @@ def collect_swing_trades(
                 leg.best = max(leg.best, fav)
                 leg.worst = max(leg.worst, adv)
 
-            # 1. 損切り。**同じ足で転換ラインにも届いていたらこちらが先。**
-            hit_stop = ((candle.low <= pos.stop) if pos.long_side
+            # --- 損切りと転換ラインは **どちらも同じ側** にある ------------
+            # 売りなら両方が上、買いなら両方が下。価格は片側から来るので
+            # **近いほうが先に着く。**順序が分からないのは反対側どうしの
+            # 水準だけで、ここには曖昧さが無い。
+            #
+            # ここで一律に損切りを先に見ていた。実際には先に届いていた
+            # 転換ラインでの手仕舞いを、毎回 -1 R の損切りへ振り替える
+            # ことになる。**負け側にだけ寄る誤り。**
+            stop_hit = ((candle.low <= pos.stop) if pos.long_side
                         else (candle.high >= pos.stop - spread))
-            if hit_stop:
-                close_position(pos, i, pos.stop, "stop", slippage)
-                positions.remove(pos)
-                continue
 
-            # 2. ダウ転換。上抜ける(下抜ける)水準は直近の確定した折り返し。
             rev = st["last_low"] if pos.long_side else st["last_high"]
             ok = rev is not None
             if ok and reversal_signal == "both":
@@ -318,40 +321,54 @@ def collect_swing_trades(
                 else:
                     ok = (st["last_low"] is not None and st["prev_low"] is not None
                           and st["last_low"].price > st["prev_low"].price)
+            rev_hit = False
+            line = 0.0
             if ok:
                 line = rev.price
-                # **抜けたときだけ。**転換ラインは逆指値なので、price が
+                # **抜けたときだけ。**転換ラインは逆指値なので、価格が
                 # 既に向こう側にあるなら発動しない。ここを見ないと、帯で
                 # 建てた瞬間に「直近の高値へ届いている」ことになり、
                 # 建てた足でいきなり利益確定する。
                 prior = candles[i - 1].close if i else candle.open
                 crossed = (prior > line) if pos.long_side else (prior < line)
-                reached = crossed and ((candle.low <= line) if pos.long_side
+                rev_hit = crossed and ((candle.low <= line) if pos.long_side
                                        else (candle.high >= line - spread))
-                if reached:
-                    close_position(pos, i, line, "reversal", 0.0)
-                    positions.remove(pos)
-                    if pos.flips < max_flips:
-                        # ドテン。損切りは **その 1 つ前の折り返し** の外側。
-                        prot = st["last_high"] if pos.long_side else st["last_low"]
-                        if prot is None:
-                            continue
-                        nl = not pos.long_side
-                        stop = (prot.price - swing_stop_buffer_atr * a if nl
-                                else prot.price + swing_stop_buffer_atr * a)
-                        risk = abs(line - stop)
-                        if risk <= 0 or ((line <= stop) if nl else (line >= stop)):
-                            continue
-                        pid_seq += 1
-                        positions.append(_Position(
-                            pid=pid_seq, long_side=nl, stop=stop, atr=a,
-                            zone_price=pos.zone_price, zone_key=pos.zone_key,
-                            flips=pos.flips + 1, anchor=prot.index,
-                            # **乗り換えに使った折り返しでは買い増ししない。**
-                            # 同じ水準・同じ足で 2 枚持つことになる。
-                            add_swing=rev.index,
-                            legs=[_Leg("flip", i, line, stop, risk, 1.0)]))
-                    continue
+            if stop_hit and rev_hit:
+                # 近いほうが先。売りは低いほう、買いは高いほう。
+                rev_first = ((line > pos.stop) if pos.long_side
+                             else (line < pos.stop))
+                stop_hit = not rev_first
+                rev_hit = rev_first
+
+            if stop_hit:
+                close_position(pos, i, pos.stop, "stop", slippage)
+                positions.remove(pos)
+                continue
+
+            if rev_hit:
+                close_position(pos, i, line, "reversal", 0.0)
+                positions.remove(pos)
+                if pos.flips < max_flips:
+                    # ドテン。損切りは **その 1 つ前の折り返し** の外側。
+                    prot = st["last_high"] if pos.long_side else st["last_low"]
+                    if prot is None:
+                        continue
+                    nl = not pos.long_side
+                    stop = (prot.price - swing_stop_buffer_atr * a if nl
+                            else prot.price + swing_stop_buffer_atr * a)
+                    risk = abs(line - stop)
+                    if risk <= 0 or ((line <= stop) if nl else (line >= stop)):
+                        continue
+                    pid_seq += 1
+                    positions.append(_Position(
+                        pid=pid_seq, long_side=nl, stop=stop, atr=a,
+                        zone_price=pos.zone_price, zone_key=pos.zone_key,
+                        flips=pos.flips + 1, anchor=prot.index,
+                        # **乗り換えに使った折り返しでは買い増ししない。**
+                        # 同じ水準・同じ足で 2 枚持つことになる。
+                        add_swing=rev.index,
+                        legs=[_Leg("flip", i, line, stop, risk, 1.0)]))
+                continue
 
             # 3. 買い増し。**流れが続く側の折り返しを抜けたら足す。**
             if pos.adds < max_adds:
@@ -379,7 +396,11 @@ def collect_swing_trades(
             if edge is None:
                 continue
             level = edge[1]
-            long_side = key == "bottom"
+            # `reverse_entry` は **同じ合図で逆に張る** ための対照。
+            # 約定する足も値段も変えず、向きだけを裏返す。素の期待値が
+            # 両向きともマイナスなら、方向ではなく **仕掛けそのものが
+            # 値を削っている**(= どこかにバグがある)ことになる。
+            long_side = (key == "bottom") != reverse_entry
             limit = (level - entry_beyond_atr * a if long_side
                      else level + entry_beyond_atr * a)
             # 離れたら次の待ち伏せを許す(同じ水準で連射しない)。
@@ -393,7 +414,9 @@ def collect_swing_trades(
             if not armed[key] or len(positions) >= max_open:
                 continue
             probe = limit - (spread if long_side else 0.0)
-            reached = ((candle.low <= probe) if long_side
+            # **触れ方は帯の側で決まる。**上端は高値で、下端は安値で触れる。
+            # 向きを裏返しても、約定する足と値段は変えない。
+            reached = ((candle.low <= probe) if key == "bottom"
                        else (candle.high >= probe))
             if not reached:
                 continue

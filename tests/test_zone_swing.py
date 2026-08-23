@@ -272,3 +272,37 @@ def test_the_rearm_distance_is_measured_from_the_order_not_the_zone():
             c = candles[t.entry_index]
             # 約定した足の終値は、注文からの再武装の距離の内側にあるはず。
             assert abs(c.close - t.entry) <= 1.0 * t.atr + 1e-9, (off, t.entry_index)
+
+
+def test_the_nearer_level_is_reached_first():
+    """損切りと転換ラインは同じ側にある。**近いほうが先に着く。**
+
+    売りなら両方が上、買いなら両方が下。価格は片側から来るので順序に
+    曖昧さが無い。ここで一律に損切りを先に見ると、**実際には先に届いて
+    いた転換ラインでの手仕舞いを、毎回 -1 R の損切りへ振り替える**
+    ことになる。負け側にだけ寄る誤り。
+    """
+    candles, ts = legs(max_adds=1, max_flips=1)
+    for t in ts:
+        if t.why != "stop":
+            continue
+        c = candles[t.exit_index]
+        # 損切りで切れた足では、損切りのほうが手前にあったはず。
+        if t.long_side:
+            assert c.low <= t.exit + 1e-9, t.exit_index
+        else:
+            assert c.high >= t.exit - 1e-9, t.exit_index
+
+
+def test_the_mirror_control_takes_the_same_fills_the_other_way():
+    """対照: 同じ合図で逆に張る。約定する足と値段は変えない。"""
+    _, base = legs(max_flips=0, max_adds=0)
+    _, mirror = legs(max_flips=0, max_adds=0, reverse_entry=True)
+    a = {(t.entry_index, round(t.entry, 9)): t
+         for t in base if t.kind == "zone"}
+    b = {(t.entry_index, round(t.entry, 9)): t
+         for t in mirror if t.kind == "zone"}
+    shared = set(a) & set(b)
+    assert len(shared) > len(a) * 0.5, (len(a), len(b), len(shared))
+    for k in shared:
+        assert a[k].long_side is not b[k].long_side, k
