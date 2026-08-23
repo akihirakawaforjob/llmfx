@@ -630,3 +630,20 @@ def test_a_collapsed_stop_is_never_taken():
             assert t.risk / t.atr >= 0.02 - 1e-9, (kw, t.entry_index,
                                                    t.risk / t.atr)
             assert abs(t.r_multiple) < 200, (kw, t.r_multiple)
+
+
+def test_the_wave_can_be_measured_from_either_turn():
+    """「直近安値」を、いちばん新しい折り返しにも 1 つ前にも取れる。
+
+    1 つ前から測ると波は長くなるので、損切りは広がる。
+    """
+    import statistics
+
+    def width(ref):
+        _, ts = legs(zone_entry="exec_turn", stop_basis="wave",
+                     stop_wave_mult=1.0, wave_ref=ref, max_flips=0, max_adds=0)
+        z = [t.risk / t.atr for t in ts if t.kind == "zone"]
+        assert z, ref
+        return statistics.mean(z)
+
+    assert width("prev") > width("last"), (width("last"), width("prev"))

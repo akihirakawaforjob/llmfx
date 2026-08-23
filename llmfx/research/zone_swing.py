@@ -145,6 +145,7 @@ def collect_swing_trades(
     stop_buffer_atr: float = 1.5,
     stop_basis: str = "band",
     stop_wave_mult: float = 1.0,
+    wave_ref: str = "last",
     min_stop_atr: float = 0.0,
     swing_stop_buffer_atr: float = 0.0,
     reversal_signal: str = "both",
@@ -213,6 +214,8 @@ def collect_swing_trades(
         raise ValueError(f"reversal_signal が不正: {reversal_signal!r}")
     if stop_basis not in ("band", "entry", "wave"):
         raise ValueError(f"stop_basis が不正: {stop_basis!r}")
+    if wave_ref not in ("last", "prev"):
+        raise ValueError(f"wave_ref が不正: {wave_ref!r}")
     if zone_entry not in ("extreme", "exec_turn"):
         raise ValueError(f"zone_entry が不正: {zone_entry!r}")
     if entry_signal not in ("exec", "structure"):
@@ -303,6 +306,11 @@ def collect_swing_trades(
         | `band` | 帯(または構造の折り返し)から `stop_buffer_atr` ATR 外 |
         | `entry` | **約定値から** `stop_buffer_atr` ATR 外 |
         | `wave` | **付近の小さな波の大きさ** の `stop_wave_mult` 倍 |
+
+        `wave_ref` は **どの折り返しから帯までを「波」と数えるか**。
+        `last` は執行の足のいちばん新しい折り返し(付近の小さな波)、
+        `prev` はその 1 つ前(帯へ向かう上げが始まった場所)。
+        利用者いわく「存外どちらが良いか分からん」ので両方測る。
 
         `wave` は利用者のやり方:
 
@@ -658,7 +666,9 @@ def collect_swing_trades(
                 if entry_fill == "next_open" and i + 1 < len(candles):
                     at, px = i + 1, candles[i + 1].open
                 # 波の大きさ = 直近の折り返しから帯まで(利用者のやり方)
-                wref = ex["last_low"] if key == "top" else ex["last_high"]
+                wref = ex[("last_low" if wave_ref == "last" else "prev_low")
+                          if key == "top"
+                          else ("last_high" if wave_ref == "last" else "prev_high")]
                 stop = place_stop(px, long_side, a, band=level,
                                   wave_from=wref.price if wref else None)
                 if stop is None:
@@ -694,7 +704,9 @@ def collect_swing_trades(
                 reached = prior < probe and candle.high >= probe
             if not reached:
                 continue
-            wref = ex["last_low"] if key == "top" else ex["last_high"]
+            wref = ex[("last_low" if wave_ref == "last" else "prev_low")
+                      if key == "top"
+                      else ("last_high" if wave_ref == "last" else "prev_high")]
             # 奥へずらしたぶんも含めて、**置いた指値そのもの** を基準にする。
             stop = place_stop(limit, long_side, a, band=limit,
                               wave_from=wref.price if wref else None)
