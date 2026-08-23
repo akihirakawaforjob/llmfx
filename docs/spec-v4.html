@@ -574,6 +574,60 @@ a{color:var(--sell)}
 
 <section>
   <div class="sechead">
+    <span class="eyebrow">用語 — 「裾」とは</span>
+    <h2>たまに起きる、とんでもなく大きく動いた回のこと</h2>
+    <p class="lede prose" style="font-size:15.5px">週の高値を抜けた場面が、1 銘柄あたり <strong>約 2,700 回</strong>ある。それぞれ「その後 5 日でどれだけ動いたか」を測ると 2,700 個の数字が並ぶ。<strong>それを小さい順に並べたときの、両端が「裾」。</strong></p>
+  </div>
+  <div class="panel">
+    <div class="tfhead"><span class="tf">GBP/USD</span><span class="ds">2,732 回の「抜けた後 5 日」の散らばり。横は ATR 何個ぶん動いたか、縦は回数</span></div>
+    <div class="chartbox" id="d-one"></div>
+    <div class="legend" id="ld-one"></div>
+  </div>
+  <div class="panel pad tblbox" style="margin-top:20px">
+    <table class="tbl">
+      <thead><tr><th>呼び方</th><th>何を指すか</th><th class="n">GBP/USD では</th></tr></thead>
+      <tbody>
+        <tr><td>中央値</td><td>2,700 個の <strong>真ん中</strong>。普通の回はこのくらい</td><td class="n">-0.09</td></tr>
+        <tr><td>平均</td><td>全部を足して割ったもの。<strong>裾に引っぱられる</strong></td><td class="n">+0.23</td></tr>
+        <tr><td><strong>右の裾</strong></td><td><strong>抜けた方向へ大きく走った回</strong>(上位 1 割の大きさ)</td><td class="n pos">+5.43</td></tr>
+        <tr><td><strong>左の裾</strong></td><td><strong>逆へ大きく戻された回</strong>(下位 1 割の大きさ)</td><td class="n neg">-4.73</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sechead" style="margin-top:44px">
+    <span class="eyebrow">なぜ裾で決まるのか</span>
+    <h2>この手法は、裾しか拾っていない</h2>
+  </div>
+  <div class="panel pad tblbox">
+    <table class="tbl">
+      <thead><tr><th>この手法の作り</th><th>結果</th></tr></thead>
+      <tbody>
+        <tr><td><strong>固定の利確を置かない</strong></td><td>右の裾へ走ったら、<strong>そのぶん全部が取り分</strong></td></tr>
+        <tr><td><strong>損切りを構造に預ける</strong></td><td>左の裾へ行っても、<strong>-1 R で止まる</strong></td></tr>
+        <tr><td>真ん中の回</td><td>建値付近で行ったり来たりして、<strong>ほぼ何も残らない</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose" style="margin-top:18px;color:var(--ink2);font-size:15px">だから損益はほぼ <strong>(右の裾)−(左の裾)</strong> で決まる。<strong>中央値は効かない</strong>(実測でも順位相関 -0.18)。</p>
+
+  <div class="panel" style="margin-top:24px">
+    <div class="tfhead"><span class="tf">比較</span><span class="ds">勝つ銘柄と負ける銘柄。真ん中はほとんど同じで、裾だけが違う</span></div>
+    <div class="chartbox" id="d-two"></div>
+    <div class="legend" id="ld-two"></div>
+  </div>
+  <div class="note bad" style="margin-top:20px">
+    <span class="lb">USD/CAD が負ける理由</span>
+    <p>右の裾 <span class="mono">+4.49</span> に対し、左の裾が <span class="mono">-4.96</span>。<strong>逆へ戻される側のほうが大きい。</strong>週の最値を抜けても、有利方向より不利方向のほうが遠くまで動く。<br><br><strong>利確を置かずに持ち続ける作りでは、原理的に勝てない。</strong>右を全部取っても、左に食われる。NZD/USD はさらに悪く、右の裾が 10 銘柄で最小(+4.21)。</p>
+  </div>
+  <div class="note" style="margin-top:16px">
+    <span class="lb">ここが使えるところ</span>
+    <p>この統計は<strong>損切りも利確もコストも通していない。</strong>価格の並びだけから出る。つまり <strong>1 単位も取引する前に計算できる。</strong>「結果が良かった銘柄を選ぶ」ではなく「<strong>裾の形が合う銘柄を選ぶ</strong>」ができる。</p>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
     <span class="eyebrow">報告</span>
     <h2>次からは、手法ごとに分けて出す</h2>
   </div>
@@ -888,4 +942,80 @@ for (const [id, key, sell] of [["cs","cs",true], ["cb","cb",false]]) {
            {c:"--be",t:"entry 約定値から"},{c:"--warn",t:"wave 波の大きさ",dash:1},
            {c:"--sell",t:"約定値"}]});
 }
+
+const DIST = {"gbpusd": {"bins": [-9.0, -8.5, -8.0, -7.5, -7.0, -6.5, -6.0, -5.5, -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5], "counts": [32, 10, 21, 19, 34, 28, 36, 55, 72, 79, 102, 97, 108, 113, 132, 155, 146, 149, 129, 133, 128, 124, 102, 88, 94, 83, 67, 66, 60, 44, 41, 29, 19, 29, 14, 94], "n": 2732, "mean": 0.229, "med": -0.087, "p10": -4.73, "p90": 5.43}, "usdcad": {"bins": [-9.0, -8.5, -8.0, -7.5, -7.0, -6.5, -6.0, -5.5, -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5], "counts": [52, 18, 19, 16, 28, 45, 36, 53, 66, 75, 83, 101, 103, 117, 128, 122, 142, 159, 174, 154, 149, 132, 133, 119, 94, 83, 62, 55, 43, 41, 38, 23, 21, 10, 9, 31], "n": 2734, "mean": -0.137, "med": 0.0, "p10": -4.96, "p90": 4.49}};
+// --- 散らばりの図(ローソク足ではないので別に描く) -----------------------
+function drawDist(box, lg, series, opt){
+  if(!box) return;
+  opt = opt || {};
+  const W = 940, H = opt.h || 340, padL = 52, padR = 24, padT = 26, padB = 46;
+  const bins = series[0].data.bins;
+  const step = (W - padL - padR) / bins.length;
+  let top = 0;
+  for(const s of series) top = Math.max(top, Math.max(...s.data.counts));
+  const X = v => padL + (v + 9) / 18 * (W - padL - padR);
+  const Y = c => H - padB - c / top * (H - padT - padB);
+  const svg = el("svg", {viewBox:`0 0 ${W} ${H}`, width:W, height:H, role:"img",
+    "aria-label": opt.alt || "散らばりの図", class:"anim"});
+  // 目盛
+  for(let v = -8; v <= 8; v += 2){
+    svg.appendChild(el("line",{x1:X(v),y1:padT,x2:X(v),y2:H-padB,
+      stroke:cv("--line2"),"stroke-width":1}));
+    svg.appendChild(txt({x:X(v),y:H-padB+18,fill:cv("--muted"),"font-size":11,
+      "text-anchor":"middle","font-family":"IBM Plex Mono, monospace"},
+      (v>0?"+":"")+v));
+  }
+  svg.appendChild(txt({x:W/2,y:H-8,fill:cv("--muted"),"font-size":11.5,
+    "text-anchor":"middle"},"抜けた方向へ ATR 何個ぶん動いたか(5 日後)"));
+  for(const s of series){
+    const d = s.data;
+    // 裾を塗る
+    for(let i=0;i<bins.length;i++){
+      const x0 = X(bins[i]), w = Math.max(1, step - 1);
+      const tail = bins[i] <= d.p10 || bins[i] >= d.p90;
+      svg.appendChild(el("rect",{x:x0,y:Y(d.counts[i]),width:w,
+        height:Math.max(0,H-padB-Y(d.counts[i])),
+        fill:cv(tail ? s.tail : s.c),
+        opacity: series.length > 1 ? (tail?.75:.45) : (tail?.95:.55)}));
+    }
+    for(const [v,lab,col] of [[d.p10,"左の裾",s.tail],[d.p90,"右の裾",s.tail]]){
+      svg.appendChild(el("line",{x1:X(v),y1:padT,x2:X(v),y2:H-padB,
+        stroke:cv(col),"stroke-width":2,"stroke-dasharray":"5 4"}));
+      if(series.length===1)
+        svg.appendChild(txt({x:X(v),y:padT-8,fill:cv(col),"font-size":12,
+          "text-anchor":"middle","font-weight":700,
+          "font-family":"IBM Plex Mono, monospace"},lab+" "+v));
+    }
+    if(series.length===1){
+      svg.appendChild(el("line",{x1:X(d.med),y1:padT+10,x2:X(d.med),y2:H-padB,
+        stroke:cv("--ink2"),"stroke-width":2}));
+      svg.appendChild(txt({x:X(d.med)+6,y:padT+22,fill:cv("--ink2"),"font-size":12,
+        "font-family":"IBM Plex Mono, monospace"},"中央値 "+d.med));
+    }
+  }
+  box.innerHTML=""; box.appendChild(svg);
+  if(lg){
+    lg.innerHTML="";
+    for(const k of (opt.keys||[])){
+      const sp=document.createElement("span"); sp.className="key";
+      const i=document.createElement("i"); i.className="sw";
+      i.style.borderTopColor=cv(k.c);
+      if(k.dash) i.style.borderTopStyle="dashed";
+      sp.appendChild(i); sp.appendChild(document.createTextNode(k.t));
+      lg.appendChild(sp);
+    }
+  }
+}
+drawDist(document.getElementById("d-one"), document.getElementById("ld-one"),
+  [{data:DIST.gbpusd, c:"--candle", tail:"--zone"}],
+  {h:340, alt:"GBP/USD の、週の最値を抜けた後 5 日の散らばり",
+   keys:[{c:"--candle",t:"普通の回(真ん中の 8 割)"},
+         {c:"--zone",t:"裾(上下それぞれ 1 割)"},
+         {c:"--ink2",t:"中央値"}]});
+drawDist(document.getElementById("d-two"), document.getElementById("ld-two"),
+  [{data:DIST.gbpusd, c:"--be", tail:"--good"},
+   {data:DIST.usdcad, c:"--stop", tail:"--stop"}],
+  {h:340, alt:"勝つ銘柄と負ける銘柄で、裾だけが違う",
+   keys:[{c:"--good",t:"GBP/USD  右+5.43 / 左-4.73 → 手法 +0.202",dash:1},
+         {c:"--stop",t:"USD/CAD  右+4.49 / 左-4.96 → 手法 -0.132",dash:1}]});
 </script>
