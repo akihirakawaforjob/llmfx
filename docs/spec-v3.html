@@ -1,0 +1,505 @@
+<title>抵抗帯トレード 第3版 仕様</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#F4F6F8; --panel:#FFFFFF; --panel2:#EDF0F4;
+  --ink:#131820; --ink2:#3D4652; --muted:#6A7482; --line:#D6DCE4; --line2:#E7EBF0;
+  --zone:#A2660D; --zone-soft:rgba(162,102,13,.13);
+  --sell:#25538F; --buy:#B5372C;
+  --stop:#C0392B; --stop-soft:rgba(192,57,43,.10);
+  --be:#0F6F66; --be-soft:rgba(15,111,102,.12);
+  --good:#2E7D46; --warn:#9A6508;
+  --candle:#4A545F; --candle-fill:#FFFFFF;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 8px 24px -12px rgba(16,24,40,.18);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#101318; --panel:#171B21; --panel2:#1E232B;
+    --ink:#E7EBF1; --ink2:#BFC7D2; --muted:#8B95A3; --line:#2A313A; --line2:#232931;
+    --zone:#D9A244; --zone-soft:rgba(217,162,68,.16);
+    --sell:#6BA3E8; --buy:#E8695E;
+    --stop:#E8695E; --stop-soft:rgba(232,105,94,.13);
+    --be:#3EBBAD; --be-soft:rgba(62,187,173,.15);
+    --good:#5FBF7C; --warn:#D9A244;
+    --candle:#98A3B0; --candle-fill:#171B21;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#101318; --panel:#171B21; --panel2:#1E232B;
+  --ink:#E7EBF1; --ink2:#BFC7D2; --muted:#8B95A3; --line:#2A313A; --line2:#232931;
+  --zone:#D9A244; --zone-soft:rgba(217,162,68,.16);
+  --sell:#6BA3E8; --buy:#E8695E;
+  --stop:#E8695E; --stop-soft:rgba(232,105,94,.13);
+  --be:#3EBBAD; --be-soft:rgba(62,187,173,.15);
+  --good:#5FBF7C; --warn:#D9A244;
+  --candle:#98A3B0; --candle-fill:#171B21;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Zen Kaku Gothic New",system-ui,-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;
+  font-size:16px; line-height:1.85; -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:1020px; margin:0 auto; padding:clamp(28px,5vw,64px) clamp(16px,4vw,32px) 96px}
+.prose{max-width:34em}
+h1,h2,h3{font-family:"Zen Old Mincho",serif; text-wrap:balance; margin:0}
+h1{font-size:clamp(28px,5.2vw,44px); font-weight:700; line-height:1.3; letter-spacing:.01em}
+h2{font-size:clamp(21px,3.4vw,28px); font-weight:700; line-height:1.4}
+h3{font-size:clamp(17px,2.4vw,20px); font-weight:500; line-height:1.5}
+p{margin:0}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; font-weight:600;
+  letter-spacing:.18em; text-transform:uppercase; color:var(--muted);
+}
+.lede{font-size:clamp(16px,2.1vw,18px); color:var(--ink2)}
+.stack{display:flex; flex-direction:column}
+.g8{gap:8px}.g12{gap:12px}.g16{gap:16px}.g24{gap:24px}.g40{gap:40px}.g64{gap:clamp(44px,7vw,72px)}
+header.top{
+  border-bottom:1px solid var(--line); padding-bottom:clamp(24px,4vw,36px);
+  margin-bottom:clamp(36px,5vw,56px);
+}
+section{scroll-margin-top:24px}
+.sechead{display:flex; flex-direction:column; gap:6px; margin-bottom:22px}
+.panel{
+  background:var(--panel); border:1px solid var(--line); border-radius:10px;
+  box-shadow:var(--shadow);
+}
+.pad{padding:clamp(16px,3vw,26px)}
+.chartbox{overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch}
+.chartbox svg{display:block; height:auto}
+.legend{display:flex; flex-wrap:wrap; gap:6px 18px; padding:14px clamp(16px,3vw,26px);
+  border-top:1px solid var(--line2); font-size:12.5px; color:var(--ink2);
+  font-family:"IBM Plex Mono",monospace}
+.key{display:inline-flex; align-items:center; gap:7px; white-space:nowrap}
+.sw{width:16px; height:0; border-top-width:2.5px; border-top-style:solid; flex:none}
+.caphead{display:flex; flex-wrap:wrap; align-items:baseline; gap:8px 14px;
+  padding:14px clamp(16px,3vw,26px) 0}
+.caphead .t{font-family:"Zen Old Mincho",serif; font-size:17px; font-weight:700}
+.caphead .m{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.chip{display:inline-block; padding:2px 9px; border-radius:999px; font-size:11.5px;
+  font-family:"IBM Plex Mono",monospace; font-weight:600; letter-spacing:.02em;
+  border:1px solid currentColor}
+.chip.win{color:var(--good)}.chip.flat{color:var(--be)}.chip.loss{color:var(--stop)}
+.steps{display:grid; gap:2px; counter-reset:s}
+.step{display:grid; grid-template-columns:2.6rem 1fr; gap:16px; padding:15px 0;
+  border-bottom:1px solid var(--line2)}
+.step:last-child{border-bottom:0}
+.step .n{font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600;
+  color:var(--muted); padding-top:.42em; letter-spacing:.06em}
+.step .b{display:flex; flex-direction:column; gap:3px}
+.step .h{font-weight:700}
+.step .d{font-size:14.5px; color:var(--ink2); line-height:1.75}
+.tbl{width:100%; border-collapse:collapse; font-size:14px;
+  font-variant-numeric:tabular-nums}
+.tbl th,.tbl td{padding:9px 12px; text-align:left; border-bottom:1px solid var(--line2)}
+.tbl thead th{font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--muted); font-weight:600; font-family:"IBM Plex Mono",monospace;
+  border-bottom:1px solid var(--line)}
+.tbl td.n,.tbl th.n{text-align:right; font-family:"IBM Plex Mono",monospace}
+.tbl tbody tr:last-child td{border-bottom:0}
+.tbl tr.tot td{font-weight:700; border-top:1px solid var(--line); background:var(--panel2)}
+.pos{color:var(--good)}.neg{color:var(--stop)}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.9em}
+code{background:var(--panel2); padding:1px 5px; border-radius:4px; color:var(--ink2)}
+.note{border-left:3px solid var(--warn); background:var(--panel); padding:16px 20px;
+  border-radius:0 8px 8px 0}
+.note.bad{border-left-color:var(--stop)}
+.note .lb{font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--warn); display:block;
+  margin-bottom:5px}
+.note.bad .lb{color:var(--stop)}
+strong{font-weight:700}
+.mark{background:var(--zone-soft); padding:0 3px; border-radius:3px}
+.two{display:grid; gap:20px; grid-template-columns:1fr 1fr}
+@media (max-width:760px){.two{grid-template-columns:1fr}}
+.tblbox{overflow-x:auto}
+.ask{font-family:"IBM Plex Mono",monospace; font-size:13px; line-height:2.1;
+  white-space:pre; color:var(--ink2)}
+hr{border:0; border-top:1px solid var(--line); margin:0}
+a{color:var(--sell)}
+:focus-visible{outline:2px solid var(--sell); outline-offset:2px}
+@media (prefers-reduced-motion:no-preference){
+  .chartbox svg .anim{animation:fade .5s ease both}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+}
+</style>
+<div class="wrap">
+
+<header class="top stack g16">
+  <span class="eyebrow">認識合わせ / 2026-08-23</span>
+  <h1>抵抗帯トレード 第3版<br>いま動いている仕様</h1>
+  <p class="lede prose">図と実トレードで突き合わせるための資料。<strong>ここに書いてあるのは合意した仕様ではなく、コードが実際にやっていること。</strong>ずれていたら、そこが直すべき場所。</p>
+  <p class="mono" style="font-size:12.5px;color:var(--muted)">USD/JPY・EUR/USD・GBP/USD ほか10銘柄 ／ M15でエントリー・H1で帯 ／ 開発用 2000-2019</p>
+</header>
+
+<div class="stack g64">
+
+<section>
+  <div class="sechead">
+    <span class="eyebrow">1 — 手順</span>
+    <h2>ひとつのトレードが決まるまで</h2>
+  </div>
+  <div class="panel pad">
+    <div class="steps">
+      <div class="step"><span class="n">帯</span><div class="b">
+        <span class="h">H1 で直近1週間(120本)の高値と安値を引く</span>
+        <span class="d">ただし <strong>その最値で折り返していること</strong>。いま進行中の動きの端は使わない。エントリーの2つ上の足で引く。</span></div></div>
+      <div class="step"><span class="n">待つ</span><div class="b">
+        <span class="h">M15 の足がその線に届くまで何もしない</span>
+        <span class="d">前の足の終値が線より下なら「下から来た」＝<span style="color:var(--sell);font-weight:700">売り</span>の準備。上からなら買い。</span></div></div>
+      <div class="step"><span class="n">合図</span><div class="b">
+        <span class="h">線を越えた足が、そのまま線の内側へ戻って引けたら</span>
+        <span class="d"><strong>ヒゲの大きさは問わない。</strong>「越えて、戻って引けた」だけが条件。ここが利用者の言う「跳ね上がりを見たらもうエントリー」。</span></div></div>
+      <div class="step"><span class="n">入る</span><div class="b">
+        <span class="h">次の足の始値で成行</span>
+        <span class="d">指値ではないので、価格は必ず線より内側になる。<strong>入りも出もスプレッドを払う。</strong></span></div></div>
+      <div class="step"><span class="n">損切り</span><div class="b">
+        <span class="h">線の外側へ 1.5 ATR</span>
+        <span class="d">物差しは <strong>M15 の ATR</strong>(帯を引いた H1 ではない)。損切りは<strong>エントリーからではなく線から</strong>測るので、リスク幅は 1.5 ATR より少し広い。</span></div></div>
+      <div class="step"><span class="n">建値へ</span><div class="b">
+        <span class="h">0.05 R 順行したら、損切りを建値へ動かす</span>
+        <span class="d"><strong>実測 0.75〜1.66 pips。</strong>ほぼ全部の建玉が最初の足でここを通る。動かすのはその足を見終わってから(足の中の道順を決めつけないため)。</span></div></div>
+      <div class="step"><span class="n">出る</span><div class="b">
+        <span class="h">固定の利確は置かない</span>
+        <span class="d">反対側の線へ届いたらそこで手仕舞う。届かなければ <strong>240本(M15で2.5日)</strong>で成行決済。</span></div></div>
+      <div class="step"><span class="n">枠</span><div class="b">
+        <span class="h">同時に4建玉まで／UTC 21・22時は持たない</span>
+        <span class="d">NYロールオーバーはスプレッドが数倍に開く。<strong>成績を見て外したのではなく、板の仕組みから事前に分かる</strong>ので先読みにならない。一度入った線は、価格が1 ATR以上離れるまで次を張らない。</span></div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <span class="eyebrow">2 — 模式図</span>
+    <h2>線・矢印・決済がどこを指しているか</h2>
+  </div>
+  <div class="panel">
+    <div class="chartbox" id="c-schema"></div>
+    <div class="legend" id="l-schema"></div>
+  </div>
+  <p class="prose" style="margin-top:16px;color:var(--ink2);font-size:15px">これは説明用に作った足。<strong>次からは本物の値段。</strong></p>
+</section>
+<section>
+  <div class="sechead">
+    <span class="eyebrow">3 — 実トレード</span>
+    <h2>USD/JPY で実際に起きた3件</h2>
+    <p class="lede prose" style="font-size:15.5px">開発用データから、<strong>三つの終わり方をそのまま切り出した</strong>もの。値段はすべて実測。</p>
+  </div>
+  <div class="stack g24">
+    <div class="panel">
+      <div class="caphead" id="h-0"></div>
+      <div class="chartbox" id="c-0"></div>
+      <div class="legend" id="l-0"></div>
+    </div>
+    <div class="panel">
+      <div class="caphead" id="h-1"></div>
+      <div class="chartbox" id="c-1"></div>
+      <div class="legend" id="l-1"></div>
+    </div>
+    <div class="panel">
+      <div class="caphead" id="h-2"></div>
+      <div class="chartbox" id="c-2"></div>
+      <div class="legend" id="l-2"></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <span class="eyebrow">4 — 内訳</span>
+    <h2>4,065件がどう終わったか</h2>
+    <p class="lede prose" style="font-size:15.5px">USD/JPY・開発用20年。<strong>ここが今日いちばん見てほしいところ。</strong></p>
+  </div>
+  <div class="panel pad tblbox">
+    <table class="tbl">
+      <thead><tr><th>終わり方</th><th class="n">件数</th><th class="n">割合</th><th class="n">平均 R</th><th class="n">合計 R</th></tr></thead>
+      <tbody>
+        <tr><td>建値で切れた</td><td class="n">3,497</td><td class="n">86.0%</td><td class="n">-0.006</td><td class="n">-21</td></tr>
+        <tr><td>素の損切り</td><td class="n">456</td><td class="n">11.2%</td><td class="n neg">-1.007</td><td class="n neg">-459</td></tr>
+        <tr><td><strong>時間切れ(240本)</strong></td><td class="n">89</td><td class="n">2.2%</td><td class="n pos">+5.75</td><td class="n pos">+512</td></tr>
+        <tr><td>反対側の線へ届いた</td><td class="n">23</td><td class="n">0.6%</td><td class="n pos">+7.17</td><td class="n pos">+165</td></tr>
+        <tr class="tot"><td>合計</td><td class="n">4,065</td><td class="n">100%</td><td class="n pos">+0.048</td><td class="n pos">+196</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="stack g16" style="margin-top:22px">
+    <div class="note bad">
+      <span class="lb">仕様と食い違っている</span>
+      <p>「利確は反対側の線」で合意したが、<strong>そこへ届くのは 0.6%(23件)しかない。</strong>勝ちの大半 89/112 は<strong>時間切れの成行決済</strong>。つまり実質の利確は「2.5日たったら閉じる」になっている。<br><br>これが意図どおりなら問題ない。ただ<strong>合意した言葉とは違う</strong>ので、ここを先に揃えたい。</p>
+    </div>
+    <div class="note">
+      <span class="lb">利益の出どころ</span>
+      <p><strong>112件(2.8%)が +677 R を作り、残り 3,953件が -481 R。</strong>勝ちの大きさが唯一の収入源という構造は、ダウ理論のときと同じ。<strong>裾に触る操作(固定の利確、追従)はここを壊す。</strong></p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <span class="eyebrow">5 — コスト</span>
+    <h2>スプレッドは「引き算」ではなく「発動位置のずれ」</h2>
+    <p class="lede prose" style="font-size:15.5px">利用者の指摘で直した部分。足は Bid なので、<strong>売りの損切りは Ask で発動する＝チャートが届く前に刺さる。</strong></p>
+  </div>
+  <div class="two">
+    <div class="panel pad stack g12">
+      <h3 style="color:var(--sell)">売り(下から来た)</h3>
+      <p class="ask">売る    ＝ Bid。そのまま
+損切り  ＝ Ask で発動
+        <span style="color:var(--stop)">→ スプレッドぶん手前で刺さる</span>
+含み益  <span style="color:var(--stop)">→ スプレッドぶん小さく見える</span></p>
+    </div>
+    <div class="panel pad stack g12">
+      <h3 style="color:var(--buy)">買い(上から来た)</h3>
+      <p class="ask">買う    ＝ Ask を払う
+        <span style="color:var(--stop)">→ Bid が余計に下がらないと届かない</span>
+損切り  ＝ Bid で発動。そのまま
+含み益  そのまま</p>
+    </div>
+  </div>
+  <p class="prose" style="margin-top:18px;color:var(--ink2);font-size:15px">どちらの向きも<strong>スプレッドを1回だけ払う</strong>が、払う場所が違う。定額を引く形と平均では近く、<strong>建値の閾値がスプレッドと同じ桁のときだけ結果が変わる。</strong>この手法はまさにそこに乗っている。</p>
+</section>
+
+<section>
+  <div class="sechead">
+    <span class="eyebrow">6 — 設定</span>
+    <h2>いま入っている値と、誰が決めたか</h2>
+  </div>
+  <div class="panel pad tblbox">
+    <table class="tbl">
+      <thead><tr><th>項目</th><th>値</th><th>根拠</th></tr></thead>
+      <tbody>
+        <tr><td>帯を引く足</td><td class="mono">H1</td><td>図で合意(エントリーの2つ上)</td></tr>
+        <tr><td>窓</td><td class="mono">120本 = 1週間</td><td>図で合意「何年も前の抵抗帯に意味はない」</td></tr>
+        <tr><td>端の条件</td><td class="mono">折り返していること</td><td>図で合意</td></tr>
+        <tr><td>エントリー</td><td class="mono">弾いた足の次の始値・成行</td><td><strong>利用者の説明を今回実装</strong></td></tr>
+        <tr><td>ヒゲの下限</td><td class="mono">なし(0.0 ATR)</td><td><strong>掃引の結果。要求すると単調に悪化</strong></td></tr>
+        <tr><td>損切り</td><td class="mono">線の外 1.5 ATR</td><td>図で合意。物差しは M15</td></tr>
+        <tr><td>建値へ動かす</td><td class="mono">0.05 R</td><td><strong>掃引の結果。詰めたい点①</strong></td></tr>
+        <tr><td>利確</td><td class="mono">置かない</td><td>図で合意</td></tr>
+        <tr><td>手仕舞い</td><td class="mono">反対側の線 / 240本</td><td><strong>実際は 0.6% しか前者にならない</strong></td></tr>
+        <tr><td>同時保有</td><td class="mono">4建玉</td><td>利用者の指摘(機会損失)</td></tr>
+        <tr><td>避ける時間</td><td class="mono">UTC 21・22時</td><td>板の仕組み。先読みにならない</td></tr>
+        <tr><td>銘柄</td><td class="mono">コスト/R ≦ 0.025</td><td><strong>結果を見ずに決められる基準</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <span class="eyebrow">7 — 次</span>
+    <h2>この2点を詰めたい</h2>
+  </div>
+  <div class="stack g16">
+    <div class="note bad">
+      <span class="lb">① 建値移動が無いと成立しない</span>
+      <p>建値へ動かさないと <strong>-0.066 R、10銘柄すべてマイナス</strong>。動かすと +0.031。閾値の軸に山が無く、<strong>0 に近づけるほど良くなる</strong>。止まっているのは「スプレッドより内側には置けない」という物理の壁だけ。<br><br>つまり <strong>「入ったら即座に建値へ逃がすのが最良」</strong>で、これは機構というより<strong>この入り方で建玉を持ち続けること自体が損</strong>という意味に見える。</p>
+    </div>
+    <div class="note bad">
+      <span class="lb">② 窓が狭い</span>
+      <p>閾値を <strong>0.05 R から 0.1 R へ倍にするだけ</strong>で、条件探しに使っていない6銘柄が <strong>+0.022 → +0.001</strong> になる。0.05 R は 0.75〜1.66 pips。<strong>1 pips 前後の一点</strong>に全部が乗っている。<br><br>実弾では滑りとスプレッドの変動がそのままここを削る。</p>
+    </div>
+    <div class="note">
+      <span class="lb">まだ使っていないもの</span>
+      <p><strong>検証用データ(2020年以降・6年半)は一度も触っていない。</strong>上の2点を詰めてから、1回だけ使う。</p>
+    </div>
+  </div>
+</section>
+
+</div>
+</div>
+<script>
+const EX = [{"tag": "\u4f38\u3073\u305f", "time": "2013-10-17 00:45:00+00:00", "r": 10.24, "held": 31, "why": "opp", "long": false, "attempt": 1, "entry": 98.951, "stop": 98.951, "opp": 97.91, "zone": 98.961, "atr": 0.061104773371390066, "risk": 0.10165716005708703, "risk_pips": 10.2, "spread_pips": 0.2, "bar_index": 321002, "fill_index": 321003, "be_at": 321003, "lo_i": 320988, "mfe": 10.28, "mae": 0.46, "candles": [{"t": "2013-10-16 21:15:00+00:00", "o": 98.776, "h": 98.782, "l": 98.736, "c": 98.781, "i": 320988}, {"t": "2013-10-16 21:30:00+00:00", "o": 98.778, "h": 98.786, "l": 98.758, "c": 98.762, "i": 320989}, {"t": "2013-10-16 21:45:00+00:00", "o": 98.763, "h": 98.776, "l": 98.737, "c": 98.755, "i": 320990}, {"t": "2013-10-16 22:00:00+00:00", "o": 98.751, "h": 98.782, "l": 98.726, "c": 98.769, "i": 320991}, {"t": "2013-10-16 22:15:00+00:00", "o": 98.767, "h": 98.773, "l": 98.718, "c": 98.751, "i": 320992}, {"t": "2013-10-16 22:30:00+00:00", "o": 98.748, "h": 98.809, "l": 98.735, "c": 98.792, "i": 320993}, {"t": "2013-10-16 22:45:00+00:00", "o": 98.783, "h": 98.807, "l": 98.766, "c": 98.783, "i": 320994}, {"t": "2013-10-16 23:00:00+00:00", "o": 98.787, "h": 98.858, "l": 98.78, "c": 98.849, "i": 320995}, {"t": "2013-10-16 23:15:00+00:00", "o": 98.848, "h": 98.853, "l": 98.839, "c": 98.842, "i": 320996}, {"t": "2013-10-16 23:30:00+00:00", "o": 98.84, "h": 98.891, "l": 98.812, "c": 98.853, "i": 320997}, {"t": "2013-10-16 23:45:00+00:00", "o": 98.855, "h": 98.916, "l": 98.853, "c": 98.913, "i": 320998}, {"t": "2013-10-17 00:00:00+00:00", "o": 98.914, "h": 98.92, "l": 98.878, "c": 98.891, "i": 320999}, {"t": "2013-10-17 00:15:00+00:00", "o": 98.892, "h": 98.917, "l": 98.875, "c": 98.887, "i": 321000}, {"t": "2013-10-17 00:30:00+00:00", "o": 98.883, "h": 98.914, "l": 98.863, "c": 98.908, "i": 321001}, {"t": "2013-10-17 00:45:00+00:00", "o": 98.907, "h": 98.973, "l": 98.905, "c": 98.951, "i": 321002}, {"t": "2013-10-17 01:00:00+00:00", "o": 98.952, "h": 98.996, "l": 98.847, "c": 98.882, "i": 321003}, {"t": "2013-10-17 01:15:00+00:00", "o": 98.88, "h": 98.926, "l": 98.854, "c": 98.864, "i": 321004}, {"t": "2013-10-17 01:30:00+00:00", "o": 98.856, "h": 98.865, "l": 98.797, "c": 98.811, "i": 321005}, {"t": "2013-10-17 01:45:00+00:00", "o": 98.81, "h": 98.826, "l": 98.759, "c": 98.771, "i": 321006}, {"t": "2013-10-17 02:00:00+00:00", "o": 98.773, "h": 98.834, "l": 98.748, "c": 98.815, "i": 321007}, {"t": "2013-10-17 02:15:00+00:00", "o": 98.816, "h": 98.824, "l": 98.762, "c": 98.765, "i": 321008}, {"t": "2013-10-17 02:30:00+00:00", "o": 98.767, "h": 98.8, "l": 98.737, "c": 98.738, "i": 321009}, {"t": "2013-10-17 02:45:00+00:00", "o": 98.74, "h": 98.741, "l": 98.664, "c": 98.682, "i": 321010}, {"t": "2013-10-17 03:00:00+00:00", "o": 98.683, "h": 98.739, "l": 98.607, "c": 98.62, "i": 321011}, {"t": "2013-10-17 03:15:00+00:00", "o": 98.626, "h": 98.726, "l": 98.609, "c": 98.666, "i": 321012}, {"t": "2013-10-17 03:30:00+00:00", "o": 98.667, "h": 98.696, "l": 98.637, "c": 98.649, "i": 321013}, {"t": "2013-10-17 03:45:00+00:00", "o": 98.65, "h": 98.656, "l": 98.534, "c": 98.613, "i": 321014}, {"t": "2013-10-17 04:00:00+00:00", "o": 98.617, "h": 98.647, "l": 98.555, "c": 98.635, "i": 321015}, {"t": "2013-10-17 04:15:00+00:00", "o": 98.633, "h": 98.664, "l": 98.598, "c": 98.647, "i": 321016}, {"t": "2013-10-17 04:30:00+00:00", "o": 98.646, "h": 98.664, "l": 98.625, "c": 98.639, "i": 321017}, {"t": "2013-10-17 04:45:00+00:00", "o": 98.64, "h": 98.657, "l": 98.598, "c": 98.618, "i": 321018}, {"t": "2013-10-17 05:00:00+00:00", "o": 98.62, "h": 98.646, "l": 98.615, "c": 98.615, "i": 321019}, {"t": "2013-10-17 05:15:00+00:00", "o": 98.614, "h": 98.635, "l": 98.601, "c": 98.633, "i": 321020}, {"t": "2013-10-17 05:30:00+00:00", "o": 98.634, "h": 98.639, "l": 98.508, "c": 98.532, "i": 321021}, {"t": "2013-10-17 05:45:00+00:00", "o": 98.531, "h": 98.557, "l": 98.497, "c": 98.54, "i": 321022}, {"t": "2013-10-17 06:00:00+00:00", "o": 98.541, "h": 98.56, "l": 98.408, "c": 98.418, "i": 321023}, {"t": "2013-10-17 06:15:00+00:00", "o": 98.413, "h": 98.463, "l": 98.388, "c": 98.462, "i": 321024}, {"t": "2013-10-17 06:30:00+00:00", "o": 98.46, "h": 98.51, "l": 98.448, "c": 98.45, "i": 321025}, {"t": "2013-10-17 06:45:00+00:00", "o": 98.451, "h": 98.476, "l": 98.404, "c": 98.436, "i": 321026}, {"t": "2013-10-17 07:00:00+00:00", "o": 98.437, "h": 98.475, "l": 98.41, "c": 98.443, "i": 321027}, {"t": "2013-10-17 07:15:00+00:00", "o": 98.444, "h": 98.501, "l": 98.365, "c": 98.385, "i": 321028}, {"t": "2013-10-17 07:30:00+00:00", "o": 98.386, "h": 98.428, "l": 98.349, "c": 98.422, "i": 321029}, {"t": "2013-10-17 07:45:00+00:00", "o": 98.418, "h": 98.452, "l": 98.392, "c": 98.447, "i": 321030}, {"t": "2013-10-17 08:00:00+00:00", "o": 98.444, "h": 98.446, "l": 98.354, "c": 98.393, "i": 321031}, {"t": "2013-10-17 08:15:00+00:00", "o": 98.394, "h": 98.413, "l": 98.28, "c": 98.302, "i": 321032}, {"t": "2013-10-17 08:30:00+00:00", "o": 98.301, "h": 98.308, "l": 98.08, "c": 98.147, "i": 321033}, {"t": "2013-10-17 08:45:00+00:00", "o": 98.146, "h": 98.16, "l": 97.904, "c": 97.944, "i": 321034}, {"t": "2013-10-17 09:00:00+00:00", "o": 97.932, "h": 97.957, "l": 97.804, "c": 97.924, "i": 321035}, {"t": "2013-10-17 09:15:00+00:00", "o": 97.923, "h": 98.013, "l": 97.913, "c": 98.002, "i": 321036}, {"t": "2013-10-17 09:30:00+00:00", "o": 98.0, "h": 98.076, "l": 98.0, "c": 98.039, "i": 321037}, {"t": "2013-10-17 09:45:00+00:00", "o": 98.04, "h": 98.066, "l": 97.925, "c": 97.961, "i": 321038}, {"t": "2013-10-17 10:00:00+00:00", "o": 97.964, "h": 98.031, "l": 97.909, "c": 97.934, "i": 321039}]}, {"tag": "\u5efa\u5024\u3067\u5207\u308c\u305f", "time": "2000-07-04 05:30:00+00:00", "r": -0.005, "held": 10, "why": "stop", "long": false, "attempt": 1, "entry": 106.439, "stop": 106.439, "opp": 104.42, "zone": 106.49, "atr": 0.0966480137478057, "risk": 0.19597202062170993, "risk_pips": 19.6, "spread_pips": 0.2, "bar_index": 2087, "fill_index": 2088, "be_at": 2088, "lo_i": 2073, "mfe": 1.21, "mae": 0.07, "candles": [{"t": "2000-07-04 02:00:00+00:00", "o": 106.33, "h": 106.34, "l": 106.22, "c": 106.25, "i": 2073}, {"t": "2000-07-04 02:15:00+00:00", "o": 106.24, "h": 106.24, "l": 106.17, "c": 106.23, "i": 2074}, {"t": "2000-07-04 02:30:00+00:00", "o": 106.24, "h": 106.25, "l": 106.2, "c": 106.2, "i": 2075}, {"t": "2000-07-04 02:45:00+00:00", "o": 106.21, "h": 106.26, "l": 106.19, "c": 106.25, "i": 2076}, {"t": "2000-07-04 03:00:00+00:00", "o": 106.27, "h": 106.3, "l": 106.27, "c": 106.28, "i": 2077}, {"t": "2000-07-04 03:15:00+00:00", "o": 106.29, "h": 106.33, "l": 106.28, "c": 106.32, "i": 2078}, {"t": "2000-07-04 03:30:00+00:00", "o": 106.33, "h": 106.42, "l": 106.33, "c": 106.39, "i": 2079}, {"t": "2000-07-04 03:45:00+00:00", "o": 106.38, "h": 106.38, "l": 106.33, "c": 106.35, "i": 2080}, {"t": "2000-07-04 04:00:00+00:00", "o": 106.36, "h": 106.37, "l": 106.31, "c": 106.32, "i": 2081}, {"t": "2000-07-04 04:15:00+00:00", "o": 106.33, "h": 106.35, "l": 106.32, "c": 106.34, "i": 2082}, {"t": "2000-07-04 04:30:00+00:00", "o": 106.32, "h": 106.32, "l": 106.29, "c": 106.32, "i": 2083}, {"t": "2000-07-04 04:45:00+00:00", "o": 106.33, "h": 106.34, "l": 106.32, "c": 106.32, "i": 2084}, {"t": "2000-07-04 05:00:00+00:00", "o": 106.31, "h": 106.31, "l": 106.3, "c": 106.3, "i": 2085}, {"t": "2000-07-04 05:15:00+00:00", "o": 106.29, "h": 106.44, "l": 106.29, "c": 106.42, "i": 2086}, {"t": "2000-07-04 05:30:00+00:00", "o": 106.43, "h": 106.55, "l": 106.42, "c": 106.43, "i": 2087}, {"t": "2000-07-04 05:45:00+00:00", "o": 106.44, "h": 106.45, "l": 106.36, "c": 106.37, "i": 2088}, {"t": "2000-07-04 06:00:00+00:00", "o": 106.38, "h": 106.39, "l": 106.2, "c": 106.24, "i": 2089}, {"t": "2000-07-04 06:15:00+00:00", "o": 106.25, "h": 106.26, "l": 106.24, "c": 106.25, "i": 2090}, {"t": "2000-07-04 06:30:00+00:00", "o": 106.27, "h": 106.27, "l": 106.27, "c": 106.27, "i": 2091}, {"t": "2000-07-04 06:45:00+00:00", "o": 106.3, "h": 106.33, "l": 106.29, "c": 106.31, "i": 2092}, {"t": "2000-07-04 07:00:00+00:00", "o": 106.3, "h": 106.37, "l": 106.3, "c": 106.32, "i": 2093}, {"t": "2000-07-04 07:15:00+00:00", "o": 106.33, "h": 106.33, "l": 106.24, "c": 106.31, "i": 2094}, {"t": "2000-07-04 07:30:00+00:00", "o": 106.3, "h": 106.32, "l": 106.28, "c": 106.31, "i": 2095}, {"t": "2000-07-04 07:45:00+00:00", "o": 106.32, "h": 106.41, "l": 106.32, "c": 106.39, "i": 2096}, {"t": "2000-07-04 08:00:00+00:00", "o": 106.4, "h": 106.41, "l": 106.27, "c": 106.3, "i": 2097}, {"t": "2000-07-04 08:15:00+00:00", "o": 106.29, "h": 106.45, "l": 106.29, "c": 106.39, "i": 2098}, {"t": "2000-07-04 08:30:00+00:00", "o": 106.38, "h": 106.39, "l": 106.33, "c": 106.38, "i": 2099}, {"t": "2000-07-04 08:45:00+00:00", "o": 106.39, "h": 106.39, "l": 106.34, "c": 106.36, "i": 2100}, {"t": "2000-07-04 09:00:00+00:00", "o": 106.35, "h": 106.36, "l": 106.25, "c": 106.29, "i": 2101}, {"t": "2000-07-04 09:15:00+00:00", "o": 106.3, "h": 106.33, "l": 106.3, "c": 106.31, "i": 2102}, {"t": "2000-07-04 09:30:00+00:00", "o": 106.3, "h": 106.35, "l": 106.28, "c": 106.35, "i": 2103}]}, {"tag": "\u640d\u5207\u308a\u306b\u523a\u3055\u3063\u305f", "time": "2000-06-20 01:45:00+00:00", "r": -1.004, "held": 7, "why": "stop", "long": false, "attempt": 1, "entry": 105.509, "stop": 105.74825565598105, "opp": null, "zone": 105.63, "atr": 0.07883710398737356, "risk": 0.23925565598105436, "risk_pips": 23.9, "spread_pips": 0.2, "bar_index": 1157, "fill_index": 1158, "be_at": null, "lo_i": 1143, "mfe": 0.0, "mae": 1.02, "candles": [{"t": "2000-06-19 22:15:00+00:00", "o": 105.91, "h": 105.93, "l": 105.91, "c": 105.92, "i": 1143}, {"t": "2000-06-19 22:30:00+00:00", "o": 105.91, "h": 105.91, "l": 105.91, "c": 105.91, "i": 1144}, {"t": "2000-06-19 22:45:00+00:00", "o": 105.9, "h": 105.9, "l": 105.88, "c": 105.89, "i": 1145}, {"t": "2000-06-19 23:00:00+00:00", "o": 105.9, "h": 105.92, "l": 105.88, "c": 105.88, "i": 1146}, {"t": "2000-06-19 23:15:00+00:00", "o": 105.89, "h": 105.9, "l": 105.87, "c": 105.88, "i": 1147}, {"t": "2000-06-19 23:30:00+00:00", "o": 105.9, "h": 105.9, "l": 105.88, "c": 105.88, "i": 1148}, {"t": "2000-06-19 23:45:00+00:00", "o": 105.89, "h": 105.9, "l": 105.88, "c": 105.88, "i": 1149}, {"t": "2000-06-20 00:00:00+00:00", "o": 105.89, "h": 105.9, "l": 105.79, "c": 105.79, "i": 1150}, {"t": "2000-06-20 00:15:00+00:00", "o": 105.82, "h": 105.82, "l": 105.77, "c": 105.8, "i": 1151}, {"t": "2000-06-20 00:30:00+00:00", "o": 105.76, "h": 105.77, "l": 105.66, "c": 105.72, "i": 1152}, {"t": "2000-06-20 00:45:00+00:00", "o": 105.73, "h": 105.8, "l": 105.71, "c": 105.76, "i": 1153}, {"t": "2000-06-20 01:00:00+00:00", "o": 105.75, "h": 105.78, "l": 105.73, "c": 105.74, "i": 1154}, {"t": "2000-06-20 01:15:00+00:00", "o": 105.75, "h": 105.79, "l": 105.74, "c": 105.78, "i": 1155}, {"t": "2000-06-20 01:30:00+00:00", "o": 105.79, "h": 105.79, "l": 105.6, "c": 105.6, "i": 1156}, {"t": "2000-06-20 01:45:00+00:00", "o": 105.61, "h": 105.69, "l": 105.52, "c": 105.52, "i": 1157}, {"t": "2000-06-20 02:00:00+00:00", "o": 105.51, "h": 105.64, "l": 105.51, "c": 105.59, "i": 1158}, {"t": "2000-06-20 02:15:00+00:00", "o": 105.58, "h": 105.65, "l": 105.56, "c": 105.6, "i": 1159}, {"t": "2000-06-20 02:30:00+00:00", "o": 105.59, "h": 105.62, "l": 105.56, "c": 105.56, "i": 1160}, {"t": "2000-06-20 02:45:00+00:00", "o": 105.61, "h": 105.67, "l": 105.6, "c": 105.65, "i": 1161}, {"t": "2000-06-20 03:00:00+00:00", "o": 105.66, "h": 105.69, "l": 105.66, "c": 105.69, "i": 1162}, {"t": "2000-06-20 03:15:00+00:00", "o": 105.68, "h": 105.73, "l": 105.68, "c": 105.7, "i": 1163}, {"t": "2000-06-20 03:30:00+00:00", "o": 105.71, "h": 105.71, "l": 105.7, "c": 105.71, "i": 1164}, {"t": "2000-06-20 03:45:00+00:00", "o": 105.72, "h": 105.75, "l": 105.72, "c": 105.74, "i": 1165}, {"t": "2000-06-20 04:00:00+00:00", "o": 105.75, "h": 105.76, "l": 105.74, "c": 105.75, "i": 1166}, {"t": "2000-06-20 04:15:00+00:00", "o": 105.76, "h": 105.76, "l": 105.75, "c": 105.76, "i": 1167}, {"t": "2000-06-20 04:30:00+00:00", "o": 105.77, "h": 105.8, "l": 105.77, "c": 105.77, "i": 1168}, {"t": "2000-06-20 04:45:00+00:00", "o": 105.74, "h": 105.77, "l": 105.72, "c": 105.77, "i": 1169}, {"t": "2000-06-20 05:00:00+00:00", "o": 105.73, "h": 105.75, "l": 105.72, "c": 105.73, "i": 1170}]}];
+const NS = "http://www.w3.org/2000/svg";
+const el = (n, a) => { const e = document.createElementNS(NS, n);
+  for (const k in a) e.setAttribute(k, a[k]); return e; };
+const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+// 価格の軸は「その窓に映るもの全部」で決める。線が枠外へ出ると
+// どこを指しているか分からなくなる。
+function draw(box, legendBox, cands, levels, marks, opt) {
+  opt = opt || {};
+  const n = cands.length, step = Math.max(11, Math.min(20, 900 / n));
+  const padL = 8, padR = 128, padT = 22, padB = 30;
+  const W = Math.round(padL + n * step + padR), H = opt.h || 320;
+  let lo = Infinity, hi = -Infinity;
+  for (const c of cands) { lo = Math.min(lo, c.l); hi = Math.max(hi, c.h); }
+  for (const v of levels) { lo = Math.min(lo, v.y); hi = Math.max(hi, v.y); }
+  const span = (hi - lo) || 1, m = span * 0.10;
+  lo -= m; hi += m;
+  const Y = p => padT + (hi - p) / (hi - lo) * (H - padT - padB);
+  const X = i => padL + (i + 0.5) * step;
+
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, width: W, height: H,
+    role: "img", "aria-label": opt.alt || "チャート", class: "anim"});
+
+  // 弾いた足を柱で示す
+  if (opt.signalAt != null) {
+    svg.appendChild(el("rect", {x: X(opt.signalAt) - step / 2, y: padT,
+      width: step, height: H - padT - padB, fill: cssv("--zone-soft")}));
+  }
+  // 建玉を持っている区間
+  if (opt.holdFrom != null && opt.holdTo != null) {
+    svg.appendChild(el("rect", {x: X(opt.holdFrom) - step / 2, y: padT,
+      width: (opt.holdTo - opt.holdFrom + 1) * step, height: H - padT - padB,
+      fill: cssv("--panel2"), opacity: .55}));
+  }
+
+  // 水準線
+  const placed = [];
+  for (const v of levels) {
+    const a = v.from == null ? padL : X(v.from) - step / 2;
+    const b = v.to == null ? W - padR : X(v.to) + step / 2;
+    svg.appendChild(el("line", {x1: a, y1: Y(v.y), x2: b, y2: Y(v.y),
+      stroke: cssv(v.c), "stroke-width": v.w || 2,
+      "stroke-dasharray": v.dash || "", "stroke-linecap": "round"}));
+    placed.push({y: Y(v.y), t: v.t, p: v.p, c: v.c});
+  }
+  // ろうそく
+  for (let i = 0; i < n; i++) {
+    const c = cands[i], up = c.c >= c.o, x = X(i), bw = Math.max(3, step * 0.62);
+    const col = cssv("--candle");
+    svg.appendChild(el("line", {x1: x, y1: Y(c.h), x2: x, y2: Y(c.l),
+      stroke: col, "stroke-width": 1.2}));
+    const y0 = Y(Math.max(c.o, c.c)), y1 = Y(Math.min(c.o, c.c));
+    svg.appendChild(el("rect", {x: x - bw / 2, y: y0, width: bw,
+      height: Math.max(1.2, y1 - y0), fill: up ? cssv("--candle-fill") : col,
+      stroke: col, "stroke-width": 1.2}));
+  }
+  // 印(エントリー・決済)
+  for (const k of marks) {
+    const x = X(k.i), y = Y(k.y), c = cssv(k.c);
+    if (k.kind === "entry") {
+      const d = k.down ? 1 : -1;
+      svg.appendChild(el("path", {d: `M ${x} ${y} l ${-6} ${-11 * d} l 12 0 Z`,
+        fill: c}));
+      svg.appendChild(el("line", {x1: x, y1: y - 11 * d, x2: x, y2: y - 30 * d,
+        stroke: c, "stroke-width": 2}));
+      const tx = el("text", {x: x, y: y - 36 * d + (d < 0 ? 11 : 0),
+        fill: c, "text-anchor": "middle", "font-size": 12,
+        "font-family": "IBM Plex Mono, monospace", "font-weight": 600});
+      tx.textContent = k.t; svg.appendChild(tx);
+    } else {
+      svg.appendChild(el("circle", {cx: x, cy: y, r: 5, fill: c,
+        stroke: cssv("--panel"), "stroke-width": 2}));
+      const tx = el("text", {x: x + 9, y: y + 4, fill: c, "font-size": 12,
+        "font-family": "IBM Plex Mono, monospace", "font-weight": 600});
+      tx.textContent = k.t; svg.appendChild(tx);
+    }
+  }
+  // 右の値札。近すぎるものは押し広げる(重なると読めない)
+  placed.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < placed.length; i++)
+    if (placed[i].y - placed[i - 1].y < 17) placed[i].y = placed[i - 1].y + 17;
+  for (const p of placed) {
+    const g = el("g", {});
+    const t1 = el("text", {x: W - padR + 10, y: p.y + 4, fill: cssv(p.c),
+      "font-size": 12, "font-family": "IBM Plex Mono, monospace",
+      "font-weight": 600});
+    t1.textContent = p.t + (p.p ? "  " + p.p : "");
+    g.appendChild(t1); svg.appendChild(g);
+  }
+  // 日付
+  if (cands[0].t) {
+    for (const i of [0, n - 1]) {
+      const tx = el("text", {x: X(i), y: H - 10, fill: cssv("--muted"),
+        "font-size": 11, "font-family": "IBM Plex Mono, monospace",
+        "text-anchor": i ? "end" : "start"});
+      tx.textContent = cands[i].t.slice(0, 16).replace("T", " ");
+      svg.appendChild(tx);
+    }
+  }
+  box.innerHTML = ""; box.appendChild(svg);
+  if (legendBox) {
+    legendBox.innerHTML = "";
+    for (const v of levels.concat(opt.extraKeys || [])) {
+      const s = document.createElement("span"); s.className = "key";
+      const sw = document.createElement("i"); sw.className = "sw";
+      sw.style.borderTopColor = cssv(v.c);
+      if (v.dash) sw.style.borderTopStyle = "dashed";
+      s.appendChild(sw);
+      s.appendChild(document.createTextNode(v.t));
+      legendBox.appendChild(s);
+    }
+  }
+}
+</script>
+<script>
+// --- 説明用の足。実データではないと分かるように日付を入れない ---------
+const S = (o,h,l,c) => ({o,h,l,c,t:""});
+const SCHEMA = [
+  S(100.00,100.18,99.92,100.12), S(100.12,100.34,100.06,100.28),
+  S(100.28,100.46,100.20,100.40), S(100.40,100.52,100.30,100.34),
+  S(100.34,100.44,100.22,100.26), S(100.26,100.58,100.24,100.52),
+  S(100.52,100.74,100.48,100.68), S(100.68,100.86,100.62,100.80),
+  // 弾いた足: 線(100.95)を越えて、線の内側へ戻って引ける
+  S(100.80,101.06,100.76,100.86),
+  // 次の足の始値で成行
+  S(100.85,100.90,100.62,100.66), S(100.66,100.72,100.44,100.48),
+  S(100.48,100.56,100.30,100.34), S(100.34,100.40,100.18,100.22),
+  S(100.22,100.30,100.02,100.06), S(100.06,100.12,99.84,99.88),
+  S(99.88,99.94,99.66,99.70), S(99.70,99.78,99.52,99.58),
+  S(99.58,99.64,99.38,99.42), S(99.42,99.50,99.26,99.30),
+  S(99.30,99.36,99.14,99.18), S(99.18,99.24,99.02,99.06)
+];
+draw(document.getElementById("c-schema"), document.getElementById("l-schema"),
+  SCHEMA,
+  [{y:100.95, c:"--zone", t:"抵抗帯(H1の1週間高値)", w:2.5},
+   {y:99.05,  c:"--good", t:"反対側の線＝手仕舞い先", w:2.5},
+   {y:101.16, c:"--stop", t:"損切り(線の外 1.5 ATR)", dash:"6 4", from:9},
+   {y:100.85, c:"--be",   t:"0.05R でここへ動かす", dash:"2 4", from:9}],
+  [{i:9, y:100.90, kind:"entry", down:false, c:"--sell", t:"売り"},
+   {i:20, y:99.06, kind:"exit", c:"--good", t:"手仕舞い"}],
+  {signalAt:8, holdFrom:9, holdTo:20, h:340,
+   alt:"抵抗帯を越えて戻って引けた足の次で売り、損切りは線の外、0.05Rで建値へ、反対側の線で手仕舞い",
+   extraKeys:[{c:"--zone", t:"■ 弾いた足(合図)"}]});
+
+// --- 実トレード -------------------------------------------------------
+EX.forEach((x, k) => {
+  const off = x.lo_i;
+  const cands = x.candles.map(c => ({o:c.o,h:c.h,l:c.l,c:c.c,t:c.t}));
+  const sig = x.bar_index - off, fill = x.fill_index - off;
+  const exit = fill + x.held;
+  const sell = !x.long;
+  const orig = x.zone + (sell ? 1.5 : -1.5) * x.atr;   // 動かす前の損切り
+  const f3 = v => v.toFixed(3);
+  const lv = [
+    {y:x.zone, c:"--zone", t:"抵抗帯", p:f3(x.zone), w:2.5},
+    {y:orig,   c:"--stop", t:"損切り", p:f3(orig), dash:"6 4", from:fill,
+     to: x.be_at == null ? exit : (x.be_at - off)},
+    {y:x.entry, c:"--sell", t:"エントリー", p:f3(x.entry), dash:"1 4", from:fill, to:exit}
+  ];
+  if (x.be_at != null)
+    lv.push({y:x.entry, c:"--be", t:"建値へ動かした損切り", p:f3(x.entry),
+             w:2.5, from:x.be_at - off, to:exit});
+  if (x.opp && x.why === "opp")
+    lv.push({y:x.opp, c:"--good", t:"反対側の線", p:f3(x.opp), w:2.5});
+  const exitY = x.why === "opp" ? x.opp : (x.why === "stop" ? x.stop
+                : cands[Math.min(exit, cands.length - 1)].c);
+  const exitT = {opp:"反対側の線で手仕舞い", stop:(x.be_at == null ? "損切り" : "建値で切れた"),
+                 time:"240本で時間切れ"}[x.why];
+  draw(document.getElementById("c-" + k), document.getElementById("l-" + k),
+    cands, lv,
+    [{i:fill, y:x.entry, kind:"entry", down:!sell, c:sell ? "--sell" : "--buy",
+      t:sell ? "売り" : "買い"},
+     {i:Math.min(exit, cands.length - 1), y:exitY, kind:"exit",
+      c:x.r > 0.05 ? "--good" : (x.r < -0.5 ? "--stop" : "--be"), t:exitT}],
+    {signalAt:sig, holdFrom:fill, holdTo:Math.min(exit, cands.length - 1), h:330,
+     alt:x.tag + "の例", extraKeys:[{c:"--zone", t:"■ 弾いた足(合図)"}]});
+
+  const cls = x.r > 0.05 ? "win" : (x.r < -0.5 ? "loss" : "flat");
+  document.getElementById("h-" + k).innerHTML =
+    '<span class="t">' + x.tag + '</span>' +
+    '<span class="chip ' + cls + '">' + (x.r >= 0 ? "+" : "") + x.r.toFixed(2) + ' R</span>' +
+    '<span class="m">' + x.time.slice(0, 16) + ' ／ ' +
+    (sell ? "売り" : "買い") + ' ／ リスク ' + x.risk_pips + ' pips ／ ' +
+    x.held + ' 本(' + (x.held * 15 / 60).toFixed(1) + ' 時間)保有 ／ ' +
+    'この線へ ' + x.attempt + ' 回目</span>';
+});
+</script>
