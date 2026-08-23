@@ -70,12 +70,21 @@ def test_a_wider_spread_makes_the_long_limit_harder_to_fill():
     「どこで発動するか」と「そもそも約定するか」に効く。売りの損切りも
     Ask で発動するぶん手前で刺さるが、転換ラインも同じだけ手前へ動くので、
     出口の内訳はほとんど変わらない。**入り口のほうに出る。**
+
+    件数で比べても揺れる。**枠が空く順番が変わると拾える機会も変わる**
+    ので(時間帯フィルタでも踏んだ挙動)、約定した足そのものを見る。
     """
-    _, tight = legs(spread=0.0)
-    _, wide = legs(spread=0.05)
-    a = len([t for t in tight if t.kind == "zone" and t.long_side])
-    b = len([t for t in wide if t.kind == "zone" and t.long_side])
-    assert a > 0 and b < a, (a, b)
+    sp = 0.05
+    candles, ts = legs(spread=sp)
+    buys = [t for t in ts if t.kind == "zone" and t.long_side]
+    sells = [t for t in ts if t.kind == "zone" and not t.long_side]
+    assert buys and sells
+    for t in buys:
+        # 買いは Ask で約定する。Bid はスプレッドぶん余計に下がっている。
+        assert candles[t.entry_index].low <= t.entry - sp + 1e-12, t.entry_index
+    for t in sells:
+        # 売りは Bid で売るので、そのまま届いていればよい。
+        assert candles[t.entry_index].high >= t.entry - 1e-12, t.entry_index
 
 
 def test_a_wider_spread_never_improves_the_result():
@@ -204,3 +213,34 @@ def test_placing_the_limit_further_out_fills_less_often():
     counts = [len([t for t in legs(entry_beyond_atr=o)[1] if t.kind == "zone"])
               for o in (0.0, 1.5)]
     assert counts[1] < counts[0], counts
+
+
+def test_a_reversal_only_fires_when_price_crosses_the_line():
+    """転換ラインは逆指値。**抜けたときだけ**発動する。
+
+    売りを帯の上端で建てた瞬間、直近の確定高値は既に価格より下にある。
+    そこで「届いた」ことにすると、**建てた足でいきなり利益確定**する。
+    実データでこれをやると期待値 +0.326 R・t=+31.8 という嘘が出た。
+    """
+    candles, ts = legs(max_adds=2, max_flips=1)
+    rev = [t for t in ts if t.why == "reversal"]
+    assert rev
+    for t in rev:
+        prior = candles[t.exit_index - 1].close
+        if t.long_side:
+            assert prior > t.exit, (t.exit_index, prior, t.exit)
+        else:
+            assert prior < t.exit, (t.exit_index, prior, t.exit)
+
+
+def test_an_add_only_fires_when_price_crosses_the_line():
+    """買い増しも同じ。既に抜けている水準では足さない。"""
+    candles, ts = legs(max_adds=3, max_flips=1)
+    adds = [t for t in ts if t.kind == "add"]
+    assert adds
+    for t in adds:
+        prior = candles[t.entry_index - 1].close
+        if t.long_side:
+            assert prior < t.entry, (t.entry_index, prior, t.entry)
+        else:
+            assert prior > t.entry, (t.entry_index, prior, t.entry)

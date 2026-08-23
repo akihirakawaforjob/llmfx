@@ -320,8 +320,14 @@ def collect_swing_trades(
                           and st["last_low"].price > st["prev_low"].price)
             if ok:
                 line = rev.price
-                reached = ((candle.low <= line) if pos.long_side
-                           else (candle.high >= line - spread))
+                # **抜けたときだけ。**転換ラインは逆指値なので、price が
+                # 既に向こう側にあるなら発動しない。ここを見ないと、帯で
+                # 建てた瞬間に「直近の高値へ届いている」ことになり、
+                # 建てた足でいきなり利益確定する。
+                prior = candles[i - 1].close if i else candle.open
+                crossed = (prior > line) if pos.long_side else (prior < line)
+                reached = crossed and ((candle.low <= line) if pos.long_side
+                                       else (candle.high >= line - spread))
                 if reached:
                     close_position(pos, i, line, "reversal", 0.0)
                     positions.remove(pos)
@@ -352,8 +358,12 @@ def collect_swing_trades(
                 go = st["last_high"] if pos.long_side else st["last_low"]
                 if go is not None and go.index != pos.add_swing:
                     line = go.price
-                    reached = ((candle.high >= line - spread) if pos.long_side
-                               else (candle.low <= line))
+                    # 買い増しも同じ。抜けたときだけ足す。
+                    prior = candles[i - 1].close if i else candle.open
+                    crossed = (prior < line) if pos.long_side else (prior > line)
+                    reached = crossed and ((candle.high >= line - spread)
+                                           if pos.long_side
+                                           else (candle.low <= line))
                     if reached:
                         risk = abs(line - pos.stop)
                         if risk > 0:
