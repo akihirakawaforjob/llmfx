@@ -330,6 +330,11 @@ def collect_swing_trades(
         if min_stop_atr:
             floor = entry + sign * min_stop_atr * a
             stop = min(stop, floor) if long_side else max(stop, floor)
+        # **潰れた損切りは建玉にしない。**幅がほぼゼロだと R が発散する
+        # (波の 0.5 倍で -6,164,632 という値が出た)。向きだけを見て
+        # いると、1e-9 の幅でも通ってしまう。
+        if abs(stop - entry) < 0.02 * a:
+            return None
         if (stop >= entry) if long_side else (stop <= entry):
             return None
         return stop

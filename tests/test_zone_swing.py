@@ -614,3 +614,19 @@ def test_the_floor_lifts_every_mechanism():
     # 帯へ触れてから入る形では、掛けないと薄い脚ができる
     _, loose = legs(zone_entry="exec_turn", max_flips=1, max_adds=1)
     assert [t for t in loose if t.risk / t.atr < 1.5 - 1e-9]
+
+
+def test_a_collapsed_stop_is_never_taken():
+    """幅がほぼゼロの損切りで建玉にしない。**R が発散する。**
+
+    波の 0.5 倍で -6,164,632 という値が出た。向きだけを見ていると
+    1e-9 の幅でも通ってしまう。
+    """
+    for kw in ({"stop_basis": "wave", "stop_wave_mult": 0.1},
+               {"stop_basis": "band", "stop_buffer_atr": 0.01},
+               {"stop_basis": "entry", "stop_buffer_atr": 0.01}):
+        _, ts = legs(zone_entry="exec_turn", max_flips=1, max_adds=1, **kw)
+        for t in ts:
+            assert t.risk / t.atr >= 0.02 - 1e-9, (kw, t.entry_index,
+                                                   t.risk / t.atr)
+            assert abs(t.r_multiple) < 200, (kw, t.r_multiple)
