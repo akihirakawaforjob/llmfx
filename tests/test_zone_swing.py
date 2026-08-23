@@ -396,3 +396,40 @@ def test_the_fill_bar_check_ignores_what_happened_before_the_fill():
                   else hurt >= t.stop_at_entry - 1e-9)
             assert ok, (t.entry_index, t.zone_key, c.close, t.stop_at_entry)
     assert checked, "確かめる建玉が無い"
+
+
+def test_the_flip_keeps_its_stop_behind_its_own_reversal_line():
+    """ドテンした建玉も、損切りは **1 つ前** の折り返しへ。
+
+    最新に置くと、乗り換えた側にとってのダウ転換も同じ水準を割ること
+    なので、**損切りと利確が同じ値段**になる。利確側の出口が消え、
+    遅れて動く損切りだけが収入源になる。実測でもドテンだけが向きに
+    関係なくマイナスだった(順 -0.037 / 逆 -0.052)。
+    """
+    _, ts = legs(max_flips=2, max_adds=0)
+    flips = [t for t in ts if t.kind == "flip"]
+    assert flips
+    for t in flips:
+        assert t.line_at_entry, t.entry_index
+        if t.long_side:
+            assert t.stop_at_entry < t.line_at_entry, (t.entry_index,
+                                                       t.stop_at_entry,
+                                                       t.line_at_entry)
+        else:
+            assert t.stop_at_entry > t.line_at_entry, (t.entry_index,
+                                                       t.stop_at_entry,
+                                                       t.line_at_entry)
+
+
+def test_a_flip_can_actually_take_profit_at_a_reversal():
+    """利確側の出口が生きていること。
+
+    損切りと同じ値段に置いていたときは、ドテンした建玉が転換で
+    利益を出して終わることが原理的に起きなかった。
+    """
+    _, ts = legs(max_flips=2, max_adds=0)
+    flips = [t for t in ts if t.kind == "flip"]
+    won = [t for t in flips if t.why == "reversal" and t.r_multiple > 0]
+    assert won, "転換で利益を出したドテンが 1 件も無い"
+    share = sum(t.why == "reversal" for t in flips) / len(flips)
+    assert share > 0.2, share

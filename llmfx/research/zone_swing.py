@@ -73,6 +73,13 @@ class SwingLeg:
     """`top`(抵抗帯)か `bottom`(支持帯)か。帯のどちら側から来たかで
     足の中の道順が変わるので、後から確かめるのに要る。"""
 
+    line_at_entry: float
+    """約定した時点の転換ライン(利確側)。0 なら まだ無い。
+
+    **損切りより手前になければ、利確側の出口が存在しない。**
+    ドテンした建玉でここが揃っていなかった。
+    """
+
     flips: int
     """その建玉が何回ドテンした後か。0 が最初。"""
 
@@ -88,6 +95,7 @@ class _Leg:
     stop_at_entry: float
     risk: float
     size: float
+    line_at_entry: float = 0.0
     best: float = 0.0
     worst: float = 0.0
 
@@ -274,7 +282,8 @@ def collect_swing_trades(
                 max_favourable_r=leg.best / leg.risk,
                 max_adverse_r=leg.worst / leg.risk,
                 position_id=pos.pid, zone_price=pos.zone_price,
-                zone_key=pos.zone_key, flips=pos.flips, adds=pos.adds))
+                zone_key=pos.zone_key, line_at_entry=leg.line_at_entry,
+                flips=pos.flips, adds=pos.adds))
         pos.legs = []
 
     for i, candle in enumerate(candles):
@@ -376,11 +385,19 @@ def collect_swing_trades(
                 close_position(pos, i, line, "reversal", 0.0)
                 positions.remove(pos)
                 if pos.flips < max_flips:
-                    # ドテン。損切りは **その 1 つ前の折り返し** の外側。
-                    prot = st["last_high"] if pos.long_side else st["last_low"]
-                    if prot is None:
-                        continue
+                    # ドテン。損切りは **1 つ前** の折り返しの外側。
+                    #
+                    # **ここを「最新」に置いていた。**乗り換えた側にとっての
+                    # ダウ転換も同じ水準を割ることなので、損切りと利確が
+                    # 同じ値段になり、**利確側の出口が消えていた。**
+                    # 遅れて動く損切りだけが収入源になり、実測でもドテン
+                    # だけが向きに関係なくマイナスだった(順 -0.037 /
+                    # 逆 -0.052)。帯から入った建玉と同じ形へ揃える。
                     nl = not pos.long_side
+                    latest = st["last_low"] if nl else st["last_high"]
+                    prot = st["prev_low"] if nl else st["prev_high"]
+                    if prot is None or latest is None:
+                        continue
                     stop = (prot.price - swing_stop_buffer_atr * a if nl
                             else prot.price + swing_stop_buffer_atr * a)
                     risk = abs(line - stop)
@@ -390,11 +407,12 @@ def collect_swing_trades(
                     positions.append(_Position(
                         pid=pid_seq, long_side=nl, stop=stop, atr=a,
                         zone_price=pos.zone_price, zone_key=pos.zone_key,
-                        flips=pos.flips + 1, anchor=prot.index,
+                        flips=pos.flips + 1, anchor=latest.index,
                         # **乗り換えに使った折り返しでは買い増ししない。**
                         # 同じ水準・同じ足で 2 枚持つことになる。
                         add_swing=rev.index,
-                        legs=[_Leg("flip", i, line, stop, risk, 1.0)]))
+                        legs=[_Leg("flip", i, line, stop, risk, 1.0,
+                                   latest.price)]))
                     if stopped_on_fill_bar(positions[-1], i, line, nl):
                         positions.pop()
                 continue
@@ -413,8 +431,10 @@ def collect_swing_trades(
                     if reached:
                         risk = abs(line - pos.stop)
                         if risk > 0:
+                            rev0 = st["last_low"] if pos.long_side else st["last_high"]
                             pos.legs.append(_Leg("add", i, line, pos.stop, risk,
-                                                 add_size))
+                                                 add_size,
+                                                 rev0.price if rev0 else 0.0))
                             pos.adds += 1
                             pos.add_swing = go.index
                             if stopped_on_fill_bar(pos, i, line, pos.long_side):
@@ -476,7 +496,8 @@ def collect_swing_trades(
                 pid=pid_seq, long_side=long_side, stop=stop, atr=a,
                 zone_price=level, zone_key=key,
                 anchor=base.index if base is not None else -1,
-                legs=[_Leg("zone", i, limit, stop, risk, 1.0)]))
+                legs=[_Leg("zone", i, limit, stop, risk, 1.0,
+                       base.price if base is not None else 0.0)]))
             if stopped_on_fill_bar(positions[-1], i, limit, key == "top"):
                 positions.pop()
 
