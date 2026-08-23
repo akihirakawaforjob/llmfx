@@ -433,3 +433,24 @@ def test_a_flip_can_actually_take_profit_at_a_reversal():
     assert won, "転換で利益を出したドテンが 1 件も無い"
     share = sum(t.why == "reversal" for t in flips) / len(flips)
     assert share > 0.2, share
+
+
+def test_the_fill_bar_assumption_brackets_a_tight_stop():
+    """損切りを詰めるほど、結論は約定足の道順の仮定だけで決まる。
+
+    損切りが足 1 本の値幅の内側に入るため。**掃引で端が最良に見えたら、
+    まずここで挟む。**
+
+    抜けた方向へ張る側でだけ差が出る。帯で跳ね返りを取る指値は、
+    水準の向こう側へ進んで約定するので **不利側の端を必ず通る**
+    (順序を問う余地がない)。
+    """
+    def stop_share(buf, mode):
+        _, ts = legs(stop_buffer_atr=buf, fill_bar=mode, reverse_entry=True,
+                     max_flips=0, max_adds=0)
+        return sum(t.bars_held == 0 and t.why == "stop" for t in ts) / len(ts)
+    tight = (stop_share(0.3, "path"), stop_share(0.3, "adverse"))
+    wide = (stop_share(2.5, "path"), stop_share(2.5, "adverse"))
+    assert tight[1] > tight[0], tight
+    # 損切りが広ければ、どちらの仮定でもほとんど変わらない
+    assert (tight[1] - tight[0]) > (wide[1] - wide[0]), (tight, wide)

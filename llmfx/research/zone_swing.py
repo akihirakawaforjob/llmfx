@@ -142,6 +142,7 @@ def collect_swing_trades(
     max_open: int = 4,
     rearm_atr: float = 1.0,
     reverse_entry: bool = False,
+    fill_bar: str = "path",
     blocked_hours_utc: frozenset[int] | None = None,
     spread: float = 0.0,
     slippage: float = 0.0,
@@ -184,10 +185,18 @@ def collect_swing_trades(
     発動位置のずれとして入る**(`zone_fade` と同じ扱い)。返る
     `r_multiple` は既に差引後なので、集計側で二重に引かないこと。
 
+    `fill_bar` は **約定した足の中で損切りへ届いたか** をどう見るか。
+    `path` は他所と同じ推し量り(陽線 始値→安値→高値→終値)で約定より
+    後だけを見る。`adverse` は不利側の端を必ず数える(不利側の端)。
+    **損切りを詰めるほど、結論はこの仮定だけで決まる。**損切りが足 1 本の
+    値幅の内側に入るため。掃引で端が最良に見えたら、まずここで挟む。
+
     足の中の道順は **損切りを先に見る**。順序が分からない以上、
     同じ足で転換ラインにも届いていたら損切りを優先する。ここは
     不利側なので、成績が良く出る方向へは倒れない。
     """
+    if fill_bar not in ("path", "adverse"):
+        raise ValueError(f"fill_bar が不正: {fill_bar!r}")
     if reversal_signal not in ("both", "high_only"):
         raise ValueError(f"reversal_signal が不正: {reversal_signal!r}")
     if max_open < 1:
@@ -258,11 +267,18 @@ def collect_swing_trades(
         (陽線 始値→安値→高値→終値)で解く。**約定より前の値動きは
         使わない。**
         """
-        pts = _after_fill(_bar_path(candles[i]), fill, from_below)
-        if not pts:
-            return False
-        hit = (min(pts) <= pos.stop if pos.long_side
-               else max(pts) >= pos.stop - spread)
+        c = candles[i]
+        if fill_bar == "adverse":
+            # **不利側の端を必ず数える。**約定より前に付いていたかも
+            # しれないが、順序が分からない以上こちらが不利側の端。
+            hit = (c.low <= pos.stop if pos.long_side
+                   else c.high >= pos.stop - spread)
+        else:
+            pts = _after_fill(_bar_path(c), fill, from_below)
+            if not pts:
+                return False
+            hit = (min(pts) <= pos.stop if pos.long_side
+                   else max(pts) >= pos.stop - spread)
         if not hit:
             return False
         close_position(pos, i, pos.stop, "stop", slippage)
