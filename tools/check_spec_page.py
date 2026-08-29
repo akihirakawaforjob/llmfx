@@ -40,7 +40,9 @@ def check(path: str) -> list[str]:
         except Exception as exc:                      # noqa: BLE001
             bad.append(f"図のデータが JSON として読めない: {exc}")
         else:
-            used = set(re.findall(r"F\.([a-z0-9]+)", s))
+            # `_` を入れないと `F.v2_bounce` を `F.v2` として拾い、
+            # 存在しない名前を報告してしまう。
+            used = set(re.findall(r"F\.([a-z0-9_]+)", s))
             missing = used - set(fig)
             if missing:
                 bad.append(f"参照しているのに図のデータに無い: {sorted(missing)}")
