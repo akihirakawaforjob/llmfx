@@ -1,0 +1,385 @@
+<title>帯に来た時点では方向を決めない</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#F4F6F8; --panel:#FFFFFF; --panel2:#EDF0F4;
+  --ink:#131820; --ink2:#3D4652; --muted:#6A7482; --line:#D6DCE4; --line2:#E7EBF0;
+  --zone:#A2660D; --zone-soft:rgba(162,102,13,.13);
+  --sell:#25538F; --buy:#B5372C;
+  --stop:#C0392B; --stop-soft:rgba(192,57,43,.10);
+  --be:#0F6F66; --be-soft:rgba(15,111,102,.12);
+  --good:#2E7D46; --warn:#9A6508;
+  --candle:#4A545F; --candle-fill:#FFFFFF;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 8px 24px -12px rgba(16,24,40,.18);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#101318; --panel:#171B21; --panel2:#1E232B;
+    --ink:#E7EBF1; --ink2:#BFC7D2; --muted:#8B95A3; --line:#2A313A; --line2:#232931;
+    --zone:#D9A244; --zone-soft:rgba(217,162,68,.16);
+    --sell:#6BA3E8; --buy:#E8695E;
+    --stop:#E8695E; --stop-soft:rgba(232,105,94,.13);
+    --be:#3EBBAD; --be-soft:rgba(62,187,173,.15);
+    --good:#5FBF7C; --warn:#D9A244;
+    --candle:#98A3B0; --candle-fill:#171B21;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#101318; --panel:#171B21; --panel2:#1E232B;
+  --ink:#E7EBF1; --ink2:#BFC7D2; --muted:#8B95A3; --line:#2A313A; --line2:#232931;
+  --zone:#D9A244; --zone-soft:rgba(217,162,68,.16);
+  --sell:#6BA3E8; --buy:#E8695E;
+  --stop:#E8695E; --stop-soft:rgba(232,105,94,.13);
+  --be:#3EBBAD; --be-soft:rgba(62,187,173,.15);
+  --good:#5FBF7C; --warn:#D9A244;
+  --candle:#98A3B0; --candle-fill:#171B21;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Zen Kaku Gothic New",system-ui,-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;
+  font-size:16px; line-height:1.85; -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:1020px; margin:0 auto; padding:clamp(28px,5vw,64px) clamp(16px,4vw,32px) 96px}
+.prose{max-width:34em}
+h1,h2,h3{font-family:"Zen Old Mincho",serif; text-wrap:balance; margin:0}
+h1{font-size:clamp(28px,5.2vw,44px); font-weight:700; line-height:1.3; letter-spacing:.01em}
+h2{font-size:clamp(21px,3.4vw,28px); font-weight:700; line-height:1.4}
+h3{font-size:clamp(17px,2.4vw,20px); font-weight:500; line-height:1.5}
+p{margin:0}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; font-weight:600;
+  letter-spacing:.18em; text-transform:uppercase; color:var(--muted);
+}
+.lede{font-size:clamp(16px,2.1vw,18px); color:var(--ink2)}
+.stack{display:flex; flex-direction:column}
+.g8{gap:8px}.g12{gap:12px}.g16{gap:16px}.g24{gap:24px}.g40{gap:40px}.g64{gap:clamp(44px,7vw,72px)}
+header.top{
+  border-bottom:1px solid var(--line); padding-bottom:clamp(24px,4vw,36px);
+  margin-bottom:clamp(36px,5vw,56px);
+}
+section{scroll-margin-top:24px}
+.sechead{display:flex; flex-direction:column; gap:6px; margin-bottom:22px}
+.panel{
+  background:var(--panel); border:1px solid var(--line); border-radius:10px;
+  box-shadow:var(--shadow);
+}
+.pad{padding:clamp(16px,3vw,26px)}
+.chartbox{overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch}
+.chartbox svg{display:block; height:auto}
+.legend{display:flex; flex-wrap:wrap; gap:6px 18px; padding:14px clamp(16px,3vw,26px);
+  border-top:1px solid var(--line2); font-size:12.5px; color:var(--ink2);
+  font-family:"IBM Plex Mono",monospace}
+.key{display:inline-flex; align-items:center; gap:7px; white-space:nowrap}
+.sw{width:16px; height:0; border-top-width:2.5px; border-top-style:solid; flex:none}
+.caphead{display:flex; flex-wrap:wrap; align-items:baseline; gap:8px 14px;
+  padding:14px clamp(16px,3vw,26px) 0}
+.caphead .t{font-family:"Zen Old Mincho",serif; font-size:17px; font-weight:700}
+.caphead .m{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.chip{display:inline-block; padding:2px 9px; border-radius:999px; font-size:11.5px;
+  font-family:"IBM Plex Mono",monospace; font-weight:600; letter-spacing:.02em;
+  border:1px solid currentColor}
+.chip.win{color:var(--good)}.chip.flat{color:var(--be)}.chip.loss{color:var(--stop)}
+.steps{display:grid; gap:2px; counter-reset:s}
+.step{display:grid; grid-template-columns:2.6rem 1fr; gap:16px; padding:15px 0;
+  border-bottom:1px solid var(--line2)}
+.step:last-child{border-bottom:0}
+.step .n{font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600;
+  color:var(--muted); padding-top:.42em; letter-spacing:.06em}
+.step .b{display:flex; flex-direction:column; gap:3px}
+.step .h{font-weight:700}
+.step .d{font-size:14.5px; color:var(--ink2); line-height:1.75}
+.tbl{width:100%; border-collapse:collapse; font-size:14px;
+  font-variant-numeric:tabular-nums}
+.tbl th,.tbl td{padding:9px 12px; text-align:left; border-bottom:1px solid var(--line2)}
+.tbl thead th{font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--muted); font-weight:600; font-family:"IBM Plex Mono",monospace;
+  border-bottom:1px solid var(--line)}
+.tbl td.n,.tbl th.n{text-align:right; font-family:"IBM Plex Mono",monospace}
+.tbl tbody tr:last-child td{border-bottom:0}
+.tbl tr.tot td{font-weight:700; border-top:1px solid var(--line); background:var(--panel2)}
+.pos{color:var(--good)}.neg{color:var(--stop)}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.9em}
+code{background:var(--panel2); padding:1px 5px; border-radius:4px; color:var(--ink2)}
+.note{border-left:3px solid var(--warn); background:var(--panel); padding:16px 20px;
+  border-radius:0 8px 8px 0}
+.note.bad{border-left-color:var(--stop)}
+.note .lb{font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--warn); display:block;
+  margin-bottom:5px}
+.note.bad .lb{color:var(--stop)}
+strong{font-weight:700}
+.mark{background:var(--zone-soft); padding:0 3px; border-radius:3px}
+.two{display:grid; gap:20px; grid-template-columns:1fr 1fr}
+@media (max-width:760px){.two{grid-template-columns:1fr}}
+.tblbox{overflow-x:auto}
+.ask{font-family:"IBM Plex Mono",monospace; font-size:13px; line-height:2.1;
+  white-space:pre; color:var(--ink2)}
+hr{border:0; border-top:1px solid var(--line); margin:0}
+a{color:var(--sell)}
+:focus-visible{outline:2px solid var(--sell); outline-offset:2px}
+@media (prefers-reduced-motion:no-preference){
+  .chartbox svg .anim{animation:fade .5s ease both}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+}
+.fig{display:block; max-width:100%; height:auto}
+.figwrap{overflow-x:auto; padding:clamp(14px,3vw,24px)}
+figure{margin:0}
+figcaption{font-size:14px; color:var(--ink2); line-height:1.75;
+  padding:12px clamp(16px,3vw,26px) 18px}
+.tag{font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:700;
+  letter-spacing:.14em; text-transform:uppercase; padding:14px clamp(14px,3vw,24px) 0}
+.tag.a{color:var(--sell)} .tag.b{color:var(--buy)} .tag.c{color:var(--be)}
+</style>
+<div class="wrap">
+<header class="top stack g16">
+  <span class="eyebrow">llmfx / 抵抗帯トレード / 認識合わせ</span>
+  <h1>帯に来た時点では方向を決めない</h1>
+  <p class="lede prose">いまの実装は、帯へ触れる<strong>前に</strong>売るか買うかを決めています。
+  仕様は「帯が何を示したかに従う」。<strong>この 1 行の差を図で確認します。</strong></p>
+</header>
+
+<div class="stack g64">
+
+<section class="stack g24">
+  <div class="sechead"><span class="eyebrow">仕様</span>
+    <h2>あなたの手順(CLAUDE.md より)</h2></div>
+  <blockquote class="quote">
+    <span class="who">利用者</span>
+    <ol>
+      <li>抵抗帯を見つける — 何度も試され、そのたびに押し戻されている水準</li>
+      <li>帯で待つ — 抜けた瞬間に飛び乗らない</li>
+      <li>帯が何を示したかに従う — 弾かれたら跳ね返りに乗り、抜けたら
+          抜けた側に乗る。<strong>帯に来た時点では方向を決めない</strong></li>
+      <li>伸ばす — 固定の利確を置くとこの裾を切り落とす</li>
+    </ol>
+  </blockquote>
+  <div class="note bad">
+    <span class="lb">実装との差</span>
+    3 が入っていません。<code>reverse_entry</code> という設定で、
+    <strong>帯へ触れる前に向きが固定</strong>されています。
+    <code>False</code> なら必ず跳ね返りに賭け、抜けたら見送る。
+    <code>True</code> なら必ずブレイクに賭け、跳ね返ったら見送る。
+  </div>
+</section>
+
+<section class="stack g24">
+  <div class="sechead"><span class="eyebrow">場面 1</span>
+    <h2>弾かれた場合 — 執行足が下へ折り返す</h2></div>
+  <div class="panel"><div class="caphead"><span class="t">帯が跳ね返した</span><span class="m">帯 100.00 / ATR 0.10 / 執行 M15</span></div><div class="chartbox" id="c-reject" role="img" aria-label="抵抗帯に触れた後、執行足の安値1を下抜けて売りに入る図"></div><div class="legend" id="l-reject"></div></div>
+  <p class="prose">帯へ触れた後、執行の足が <strong>安値1 を下抜けた</strong>ところで売り。
+  損切りは帯の外。<span class="mark">この動きは今の実装でも取れます</span>
+  (<code>reverse_entry=False</code> のとき)。</p>
+</section>
+
+<section class="stack g24">
+  <div class="sechead"><span class="eyebrow">場面 2</span>
+    <h2>抜けた場合 — 執行足が上へ折り返す</h2></div>
+  <div class="panel"><div class="caphead"><span class="t">帯を抜けた</span><span class="m">帯 100.00 / ATR 0.10 / 執行 M15</span></div><div class="chartbox" id="c-breakout" role="img" aria-label="抵抗帯に触れた後、執行足の高値1を上抜けて買いに入る図"></div><div class="legend" id="l-breakout"></div></div>
+  <p class="prose">同じ帯へ触れた後、今度は執行の足が <strong>高値1 を上抜けた</strong>ところで買い。
+  <span class="mark">この動きも今の実装で取れます</span>
+  (<code>reverse_entry=True</code> のとき)。</p>
+  <div class="note bad">
+    <span class="lb">取れないもの</span>
+    <strong>同じ設定で両方を取ることができません。</strong>
+    今の実装はどちらか一方に固定されるので、場面 1 用に設定すると場面 2 が見送られ、
+    場面 2 用に設定すると場面 1 が見送られます。
+  </div>
+</section>
+
+<section class="stack g24">
+  <div class="sechead"><span class="eyebrow">提案する規則</span>
+    <h2>先に来たほうを取る</h2></div>
+  <div class="panel">
+    <div class="caphead"><span class="t">帯へ触れてから、両側を同時に見張る</span>
+      <span class="m">どちらか先に抜けたほうで入る</span></div>
+    <figure>
+    <div class="figwrap">
+    <svg class="fig" viewBox="0 0 760 320" width="760" height="320" role="img"
+      aria-label="帯に触れた後、上側の執行高値と下側の執行安値を同時に見張り、先に抜けたほうの方向で入る規則の図">
+      <line x1="60" y1="150" x2="700" y2="150" stroke="var(--zone)" stroke-width="3"/>
+      <text x="60" y="141" fill="var(--zone)" font-size="12" font-weight="600"
+            font-family="IBM Plex Mono, monospace">抵抗帯 100.00</text>
+      <circle cx="200" cy="150" r="6" fill="var(--zone)"/>
+      <text x="200" y="180" fill="var(--ink2)" font-size="12" text-anchor="middle"
+            font-family="IBM Plex Mono, monospace">帯へ触れる</text>
+      <text x="200" y="197" fill="var(--muted)" font-size="11.5" text-anchor="middle"
+            font-family="IBM Plex Mono, monospace">ここでは方向を決めない</text>
+
+      <line x1="230" y1="95" x2="700" y2="95" stroke="var(--buy)" stroke-width="2"
+            stroke-dasharray="6 5"/>
+      <text x="236" y="86" fill="var(--buy)" font-size="12" font-weight="600"
+            font-family="IBM Plex Mono, monospace">執行 高値1 — 上抜けたら 買い</text>
+      <line x1="230" y1="215" x2="700" y2="215" stroke="var(--sell)" stroke-width="2"
+            stroke-dasharray="6 5"/>
+      <text x="236" y="232" fill="var(--sell)" font-size="12" font-weight="600"
+            font-family="IBM Plex Mono, monospace">執行 安値1 — 下抜けたら 売り</text>
+
+      <path d="M 200 150 L 230 150" stroke="var(--ink2)" stroke-width="2"/>
+      <path d="M 230 150 L 300 95" stroke="var(--buy)" stroke-width="2.5"/>
+      <polygon points="300,95 288,96 295,106" fill="var(--buy)"/>
+      <path d="M 230 150 L 300 215" stroke="var(--sell)" stroke-width="2.5"/>
+      <polygon points="300,215 295,204 288,214" fill="var(--sell)"/>
+
+      <line x1="470" y1="60" x2="470" y2="250" stroke="var(--line)" stroke-width="1.5"
+            stroke-dasharray="4 4"/>
+      <text x="480" y="66" fill="var(--muted)" font-size="11.5"
+            font-family="IBM Plex Mono, monospace">24 本(執行足)で打ち切り</text>
+
+      <text x="60" y="40" fill="var(--be)" font-size="13" font-weight="700"
+            font-family="IBM Plex Mono, monospace">先に抜けたほうで入る。もう一方はその時点で取り消す</text>
+      <text x="60" y="290" fill="var(--muted)" font-size="12"
+            font-family="IBM Plex Mono, monospace">損切りはどちらの向きでも帯の外 1.5 ATR。約定値から 2.0 ATR は必ず空ける</text>
+      <text x="60" y="308" fill="var(--muted)" font-size="12"
+            font-family="IBM Plex Mono, monospace">同じ足で両方に触れたら、帯から遠いほう(= 後から届くほう)を採らない</text>
+    </svg>
+    </div>
+    <figcaption>帯へ触れた時点では注文を出さず、上下 2 本の水準を同時に見張ります。
+    先に抜けたほうの向きで入り、もう一方は取り消します。</figcaption>
+    </figure>
+  </div>
+  <div class="note">
+    <span class="lb">確認したいこと</span>
+    <ol style="margin:6px 0 0; padding-left:1.3em">
+      <li>見張る水準は<strong>執行足の直近の高値と安値</strong>でよいか
+          (いまのドテン・買い増しと同じ基準)</li>
+      <li>同じ足で両方に触れたとき、どちらを採るか。
+          <strong>帯に近いほうが先に届いた</strong>と考える案でよいか</li>
+      <li>24 本(執行足)で打ち切るのは今のまま</li>
+      <li>損切りはどちらの向きでも帯の外。<strong>向きで変えない</strong></li>
+    </ol>
+  </div>
+</section>
+
+</div></div>
+<script>
+const NS="http://www.w3.org/2000/svg";
+const el=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e;};
+const cv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const txt=(o,s)=>{const t=el("text",o);t.textContent=s;return t;};
+
+function draw(box, lg, cands, levels, marks, opt){
+  // **枠が無ければ黙って帰る。**節を差し替えたときに呼び出しだけ残ると、
+  // ここで例外になり **以降の図が全部止まる**(実際に止めた)。
+  if(!box || !cands || !cands.length) return;
+  opt=opt||{};
+  const n=cands.length, step=Math.max(11,Math.min(19,880/n));
+  const padL=10,padR=136,padT=30,padB=22;
+  const W=Math.round(padL+n*step+padR), H=opt.h||330;
+  let lo=Infinity,hi=-Infinity;
+  for(const c of cands){lo=Math.min(lo,c.l);hi=Math.max(hi,c.h);}
+  for(const v of levels)if(v.y!=null){lo=Math.min(lo,v.y);hi=Math.max(hi,v.y);}
+  const sp=(hi-lo)||1,m=sp*0.11; lo-=m; hi+=m;
+  const Y=p=>padT+(hi-p)/(hi-lo)*(H-padT-padB);
+  const X=i=>padL+(i+0.5)*step;
+  const svg=el("svg",{viewBox:`0 0 ${W} ${H}`,width:W,height:H,role:"img",
+    "aria-label":opt.alt||"仕様の模式図",class:"anim"});
+
+  for(const b of (opt.bands||[]))
+    svg.appendChild(el("rect",{x:padL,y:padT,width:W-padR-padL,
+      height:H-padT-padB,fill:"none"}));
+  for(const z of (opt.zones||[]))
+    svg.appendChild(el("rect",{x:X(z.from)-step/2,y:padT,
+      width:(z.to-z.from+1)*step,height:H-padT-padB,
+      fill:cv(z.c),opacity:z.op==null?.5:z.op}));
+
+  // 水準線
+  const tags=[];
+  for(const v of levels){
+    const a=v.from==null?padL:X(v.from)-step/2;
+    const b=v.to==null?W-padR:X(v.to)+step/2;
+    svg.appendChild(el("line",{x1:a,y1:Y(v.y),x2:b,y2:Y(v.y),stroke:cv(v.c),
+      "stroke-width":v.w||2,"stroke-dasharray":v.dash||"","stroke-linecap":"round",
+      opacity:v.op==null?1:v.op}));
+    if(v.t)tags.push({y:Y(v.y),t:v.t,c:v.c,x:b});
+  }
+  // ろうそく
+  for(let i=0;i<n;i++){
+    const c=cands[i],up=c.c>=c.o,x=X(i),bw=Math.max(3,step*0.6),col=cv("--candle");
+    svg.appendChild(el("line",{x1:x,y1:Y(c.h),x2:x,y2:Y(c.l),stroke:col,"stroke-width":1.2}));
+    const y0=Y(Math.max(c.o,c.c)),y1=Y(Math.min(c.o,c.c));
+    svg.appendChild(el("rect",{x:x-bw/2,y:y0,width:bw,height:Math.max(1.2,y1-y0),
+      fill:up?cv("--candle-fill"):col,stroke:col,"stroke-width":1.2}));
+  }
+  // 折り返しの札
+  for(const s of (opt.swings||[])){
+    if(!s[2])continue;
+    const up=s[3]==="high",x=X(s[0]),y=Y(s[1]);
+    svg.appendChild(el("circle",{cx:x,cy:y,r:3,fill:cv("--muted")}));
+    svg.appendChild(txt({x:x,y:up?y-9:y+16,fill:cv("--muted"),"font-size":11,
+      "font-family":"IBM Plex Mono, monospace","text-anchor":"middle",
+      "font-weight":600},s[2]));
+  }
+  // 印
+  for(const k of marks){
+    const x=X(k.i),y=Y(k.y),c=cv(k.c);
+    if(k.kind==="entry"){
+      const d=k.down?1:-1;
+      svg.appendChild(el("path",{d:`M ${x} ${y} l -6 ${-11*d} l 12 0 Z`,fill:c}));
+      svg.appendChild(el("line",{x1:x,y1:y-11*d,x2:x,y2:y-26*d,stroke:c,"stroke-width":2}));
+      svg.appendChild(txt({x:x,y:y-31*d+(d<0?11:0),fill:c,"text-anchor":"middle",
+        "font-size":12,"font-family":"IBM Plex Mono, monospace","font-weight":700},k.t));
+    }else if(k.kind==="ghost"){
+      svg.appendChild(el("circle",{cx:x,cy:y,r:5,fill:"none",stroke:c,
+        "stroke-width":2,"stroke-dasharray":"3 3"}));
+      svg.appendChild(txt({x:x+10,y:y+4,fill:c,"font-size":11.5,
+        "font-family":"IBM Plex Mono, monospace"},k.t));
+    }else{
+      svg.appendChild(el("circle",{cx:x,cy:y,r:5,fill:c,stroke:cv("--panel"),"stroke-width":2}));
+      svg.appendChild(txt({x:x+10,y:y+4,fill:c,"font-size":12,
+        "font-family":"IBM Plex Mono, monospace","font-weight":600},k.t));
+    }
+  }
+  // 右の札。重なりを押し広げる
+  tags.sort((a,b)=>a.y-b.y);
+  for(let i=1;i<tags.length;i++)
+    if(tags[i].y-tags[i-1].y<17)tags[i].y=tags[i-1].y+17;
+  for(const p of tags)
+    svg.appendChild(txt({x:W-padR+10,y:p.y+4,fill:cv(p.c),"font-size":12,
+      "font-family":"IBM Plex Mono, monospace","font-weight":600},p.t));
+  box.innerHTML=""; box.appendChild(svg);
+  if(lg){
+    lg.innerHTML="";
+    for(const v of (opt.keys||levels)){
+      if(!v.t)continue;
+      const s=document.createElement("span"); s.className="key";
+      const i=document.createElement("i"); i.className="sw";
+      i.style.borderTopColor=cv(v.c);
+      if(v.dash)i.style.borderTopStyle="dashed";
+      s.appendChild(i); s.appendChild(document.createTextNode(v.k||v.t));
+      lg.appendChild(s);
+    }
+  }
+}
+
+const F = {"reject": {"candles": [{"o": 99.55, "h": 99.618, "l": 99.52, "c": 99.604, "t": ""}, {"o": 99.604, "h": 99.7, "l": 99.58, "c": 99.658, "t": ""}, {"o": 99.658, "h": 99.737, "l": 99.632, "c": 99.712, "t": ""}, {"o": 99.712, "h": 99.774, "l": 99.703, "c": 99.766, "t": ""}, {"o": 99.766, "h": 99.855, "l": 99.728, "c": 99.82, "t": ""}, {"o": 99.82, "h": 99.849, "l": 99.783, "c": 99.8, "t": ""}, {"o": 99.8, "h": 99.807, "l": 99.765, "c": 99.78, "t": ""}, {"o": 99.78, "h": 99.795, "l": 99.752, "c": 99.76, "t": ""}, {"o": 99.76, "h": 99.79, "l": 99.708, "c": 99.74, "t": ""}, {"o": 99.74, "h": 99.829, "l": 99.718, "c": 99.81, "t": ""}, {"o": 99.81, "h": 99.896, "l": 99.792, "c": 99.88, "t": ""}, {"o": 99.88, "h": 99.979, "l": 99.863, "c": 99.95, "t": ""}, {"o": 99.95, "h": 100.044, "l": 99.899, "c": 100.02, "t": ""}, {"o": 100.02, "h": 100.043, "l": 99.972, "c": 99.985, "t": ""}, {"o": 99.985, "h": 99.997, "l": 99.937, "c": 99.95, "t": ""}, {"o": 99.95, "h": 99.964, "l": 99.899, "c": 99.915, "t": ""}, {"o": 99.915, "h": 99.95, "l": 99.843, "c": 99.88, "t": ""}, {"o": 99.88, "h": 99.923, "l": 99.871, "c": 99.907, "t": ""}, {"o": 99.907, "h": 99.94, "l": 99.891, "c": 99.933, "t": ""}, {"o": 99.933, "h": 99.991, "l": 99.916, "c": 99.96, "t": ""}, {"o": 99.96, "h": 99.996, "l": 99.864, "c": 99.903, "t": ""}, {"o": 99.903, "h": 99.911, "l": 99.838, "c": 99.847, "t": ""}, {"o": 99.847, "h": 99.871, "l": 99.764, "c": 99.79, "t": ""}, {"o": 99.79, "h": 99.833, "l": 99.709, "c": 99.733, "t": ""}, {"o": 99.733, "h": 99.748, "l": 99.645, "c": 99.677, "t": ""}, {"o": 99.677, "h": 99.691, "l": 99.612, "c": 99.62, "t": ""}, {"o": 99.62, "h": 99.647, "l": 99.554, "c": 99.583, "t": ""}, {"o": 99.583, "h": 99.601, "l": 99.526, "c": 99.547, "t": ""}, {"o": 99.547, "h": 99.566, "l": 99.49, "c": 99.51, "t": ""}, {"o": 99.51, "h": 99.524, "l": 99.465, "c": 99.473, "t": ""}, {"o": 99.473, "h": 99.49, "l": 99.402, "c": 99.437, "t": ""}, {"o": 99.437, "h": 99.469, "l": 99.381, "c": 99.4, "t": ""}, {"o": 99.4, "h": 99.414, "l": 99.385, "c": 99.4, "t": ""}], "band": 100.0, "atr": 0.1, "swings": [[13, 100.02, "執行 高値1", "high"], [17, 99.88, "執行 安値1", "low"], [20, 99.96, "執行 高値2", "high"]], "touch_at": 13, "sell_line": 99.88, "sell_at": 22, "buy_line": 100.02, "stop": 100.17}, "breakout": {"candles": [{"o": 99.55, "h": 99.618, "l": 99.52, "c": 99.604, "t": ""}, {"o": 99.604, "h": 99.7, "l": 99.58, "c": 99.658, "t": ""}, {"o": 99.658, "h": 99.737, "l": 99.632, "c": 99.712, "t": ""}, {"o": 99.712, "h": 99.774, "l": 99.703, "c": 99.766, "t": ""}, {"o": 99.766, "h": 99.855, "l": 99.728, "c": 99.82, "t": ""}, {"o": 99.82, "h": 99.849, "l": 99.783, "c": 99.8, "t": ""}, {"o": 99.8, "h": 99.807, "l": 99.765, "c": 99.78, "t": ""}, {"o": 99.78, "h": 99.795, "l": 99.752, "c": 99.76, "t": ""}, {"o": 99.76, "h": 99.79, "l": 99.708, "c": 99.74, "t": ""}, {"o": 99.74, "h": 99.829, "l": 99.718, "c": 99.81, "t": ""}, {"o": 99.81, "h": 99.896, "l": 99.792, "c": 99.88, "t": ""}, {"o": 99.88, "h": 99.979, "l": 99.863, "c": 99.95, "t": ""}, {"o": 99.95, "h": 100.044, "l": 99.899, "c": 100.02, "t": ""}, {"o": 100.02, "h": 100.042, "l": 99.978, "c": 99.99, "t": ""}, {"o": 99.99, "h": 100.002, "l": 99.947, "c": 99.96, "t": ""}, {"o": 99.96, "h": 99.974, "l": 99.914, "c": 99.93, "t": ""}, {"o": 99.93, "h": 99.963, "l": 99.864, "c": 99.9, "t": ""}, {"o": 99.9, "h": 99.958, "l": 99.89, "c": 99.94, "t": ""}, {"o": 99.94, "h": 99.988, "l": 99.923, "c": 99.98, "t": ""}, {"o": 99.98, "h": 100.055, "l": 99.96, "c": 100.02, "t": ""}, {"o": 100.02, "h": 100.092, "l": 99.986, "c": 100.06, "t": ""}, {"o": 100.06, "h": 100.128, "l": 100.051, "c": 100.12, "t": ""}, {"o": 100.12, "h": 100.205, "l": 100.093, "c": 100.18, "t": ""}, {"o": 100.18, "h": 100.284, "l": 100.155, "c": 100.24, "t": ""}, {"o": 100.24, "h": 100.315, "l": 100.208, "c": 100.3, "t": ""}, {"o": 100.3, "h": 100.375, "l": 100.292, "c": 100.36, "t": ""}, {"o": 100.36, "h": 100.453, "l": 100.325, "c": 100.42, "t": ""}, {"o": 100.42, "h": 100.488, "l": 100.397, "c": 100.468, "t": ""}, {"o": 100.468, "h": 100.537, "l": 100.446, "c": 100.516, "t": ""}, {"o": 100.516, "h": 100.58, "l": 100.507, "c": 100.564, "t": ""}, {"o": 100.564, "h": 100.63, "l": 100.526, "c": 100.612, "t": ""}, {"o": 100.612, "h": 100.696, "l": 100.592, "c": 100.66, "t": ""}, {"o": 100.66, "h": 100.676, "l": 100.643, "c": 100.66, "t": ""}], "band": 100.0, "atr": 0.1, "swings": [[13, 100.02, "執行 高値1", "high"], [17, 99.9, "執行 安値1", "low"]], "touch_at": 13, "buy_line": 100.02, "buy_at": 20, "sell_line": 99.9, "stop": 99.75}};
+(function(){
+  const f=F.reject;
+  draw(document.getElementById("c-reject"), document.getElementById("l-reject"),
+    f.candles,
+    [{y:f.band,c:"--zone",w:3,t:"抵抗帯 "+f.band.toFixed(2),k:"抵抗帯"},
+     {y:f.buy_line,c:"--buy",w:2,dash:"5 5",t:"高値1 上抜け → 買い(来ず)",k:"上抜けたら買い"},
+     {y:f.sell_line,c:"--sell",w:2.5,t:"安値1 下抜け → 売り",k:"下抜けたら売り"},
+     {y:f.stop,c:"--stop",w:2.5,dash:"3 4",t:"損切り "+f.stop.toFixed(2),k:"損切り(帯の外)"}],
+    [{i:f.touch_at,y:f.band,c:"--zone",kind:"ghost",t:"帯へ触れる"},
+     {i:f.sell_at,y:f.sell_line,c:"--sell",kind:"entry",t:"売り",down:true}],
+    {h:340,swings:f.swings,alt:"帯が跳ね返した場合"});
+})();
+(function(){
+  const f=F.breakout;
+  draw(document.getElementById("c-breakout"), document.getElementById("l-breakout"),
+    f.candles,
+    [{y:f.band,c:"--zone",w:3,t:"抵抗帯 "+f.band.toFixed(2),k:"抵抗帯"},
+     {y:f.buy_line,c:"--buy",w:2.5,t:"高値1 上抜け → 買い",k:"上抜けたら買い"},
+     {y:f.sell_line,c:"--sell",w:2,dash:"5 5",t:"安値1 下抜け → 売り(来ず)",k:"下抜けたら売り"},
+     {y:f.stop,c:"--stop",w:2.5,dash:"3 4",t:"損切り "+f.stop.toFixed(2),k:"損切り(帯の外)"}],
+    [{i:f.touch_at,y:f.band,c:"--zone",kind:"ghost",t:"帯へ触れる"},
+     {i:f.buy_at,y:f.buy_line,c:"--buy",kind:"entry",t:"買い"}],
+    {h:340,swings:f.swings,alt:"帯を抜けた場合"});
+})();
+</script>
