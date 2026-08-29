@@ -1,0 +1,484 @@
+<title>損切りはどこへ動くか</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#F4F6F8; --panel:#FFFFFF; --panel2:#EDF0F4;
+  --ink:#131820; --ink2:#3D4652; --muted:#6A7482; --line:#D6DCE4; --line2:#E7EBF0;
+  --zone:#A2660D; --zone-soft:rgba(162,102,13,.13);
+  --sell:#25538F; --buy:#B5372C;
+  --stop:#C0392B; --stop-soft:rgba(192,57,43,.10);
+  --be:#0F6F66; --be-soft:rgba(15,111,102,.12);
+  --good:#2E7D46; --warn:#9A6508;
+  --candle:#4A545F; --candle-fill:#FFFFFF;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 8px 24px -12px rgba(16,24,40,.18);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#101318; --panel:#171B21; --panel2:#1E232B;
+    --ink:#E7EBF1; --ink2:#BFC7D2; --muted:#8B95A3; --line:#2A313A; --line2:#232931;
+    --zone:#D9A244; --zone-soft:rgba(217,162,68,.16);
+    --sell:#6BA3E8; --buy:#E8695E;
+    --stop:#E8695E; --stop-soft:rgba(232,105,94,.13);
+    --be:#3EBBAD; --be-soft:rgba(62,187,173,.15);
+    --good:#5FBF7C; --warn:#D9A244;
+    --candle:#98A3B0; --candle-fill:#171B21;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#101318; --panel:#171B21; --panel2:#1E232B;
+  --ink:#E7EBF1; --ink2:#BFC7D2; --muted:#8B95A3; --line:#2A313A; --line2:#232931;
+  --zone:#D9A244; --zone-soft:rgba(217,162,68,.16);
+  --sell:#6BA3E8; --buy:#E8695E;
+  --stop:#E8695E; --stop-soft:rgba(232,105,94,.13);
+  --be:#3EBBAD; --be-soft:rgba(62,187,173,.15);
+  --good:#5FBF7C; --warn:#D9A244;
+  --candle:#98A3B0; --candle-fill:#171B21;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Zen Kaku Gothic New",system-ui,-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;
+  font-size:16px; line-height:1.85; -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:1020px; margin:0 auto; padding:clamp(28px,5vw,64px) clamp(16px,4vw,32px) 96px}
+.prose{max-width:34em}
+h1,h2,h3{font-family:"Zen Old Mincho",serif; text-wrap:balance; margin:0}
+h1{font-size:clamp(28px,5.2vw,44px); font-weight:700; line-height:1.3; letter-spacing:.01em}
+h2{font-size:clamp(21px,3.4vw,28px); font-weight:700; line-height:1.4}
+h3{font-size:clamp(17px,2.4vw,20px); font-weight:500; line-height:1.5}
+p{margin:0}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; font-weight:600;
+  letter-spacing:.18em; text-transform:uppercase; color:var(--muted);
+}
+.lede{font-size:clamp(16px,2.1vw,18px); color:var(--ink2)}
+.stack{display:flex; flex-direction:column}
+.g8{gap:8px}.g12{gap:12px}.g16{gap:16px}.g24{gap:24px}.g40{gap:40px}.g64{gap:clamp(44px,7vw,72px)}
+header.top{
+  border-bottom:1px solid var(--line); padding-bottom:clamp(24px,4vw,36px);
+  margin-bottom:clamp(36px,5vw,56px);
+}
+section{scroll-margin-top:24px}
+.sechead{display:flex; flex-direction:column; gap:6px; margin-bottom:22px}
+.panel{
+  background:var(--panel); border:1px solid var(--line); border-radius:10px;
+  box-shadow:var(--shadow);
+}
+.pad{padding:clamp(16px,3vw,26px)}
+.chartbox{overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch}
+.chartbox svg{display:block; height:auto}
+.legend{display:flex; flex-wrap:wrap; gap:6px 18px; padding:14px clamp(16px,3vw,26px);
+  border-top:1px solid var(--line2); font-size:12.5px; color:var(--ink2);
+  font-family:"IBM Plex Mono",monospace}
+.key{display:inline-flex; align-items:center; gap:7px; white-space:nowrap}
+.sw{width:16px; height:0; border-top-width:2.5px; border-top-style:solid; flex:none}
+.caphead{display:flex; flex-wrap:wrap; align-items:baseline; gap:8px 14px;
+  padding:14px clamp(16px,3vw,26px) 0}
+.caphead .t{font-family:"Zen Old Mincho",serif; font-size:17px; font-weight:700}
+.caphead .m{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.chip{display:inline-block; padding:2px 9px; border-radius:999px; font-size:11.5px;
+  font-family:"IBM Plex Mono",monospace; font-weight:600; letter-spacing:.02em;
+  border:1px solid currentColor}
+.chip.win{color:var(--good)}.chip.flat{color:var(--be)}.chip.loss{color:var(--stop)}
+.steps{display:grid; gap:2px; counter-reset:s}
+.step{display:grid; grid-template-columns:2.6rem 1fr; gap:16px; padding:15px 0;
+  border-bottom:1px solid var(--line2)}
+.step:last-child{border-bottom:0}
+.step .n{font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600;
+  color:var(--muted); padding-top:.42em; letter-spacing:.06em}
+.step .b{display:flex; flex-direction:column; gap:3px}
+.step .h{font-weight:700}
+.step .d{font-size:14.5px; color:var(--ink2); line-height:1.75}
+.tbl{width:100%; border-collapse:collapse; font-size:14px;
+  font-variant-numeric:tabular-nums}
+.tbl th,.tbl td{padding:9px 12px; text-align:left; border-bottom:1px solid var(--line2)}
+.tbl thead th{font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--muted); font-weight:600; font-family:"IBM Plex Mono",monospace;
+  border-bottom:1px solid var(--line)}
+.tbl td.n,.tbl th.n{text-align:right; font-family:"IBM Plex Mono",monospace}
+.tbl tbody tr:last-child td{border-bottom:0}
+.tbl tr.tot td{font-weight:700; border-top:1px solid var(--line); background:var(--panel2)}
+.pos{color:var(--good)}.neg{color:var(--stop)}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.9em}
+code{background:var(--panel2); padding:1px 5px; border-radius:4px; color:var(--ink2)}
+.note{border-left:3px solid var(--warn); background:var(--panel); padding:16px 20px;
+  border-radius:0 8px 8px 0}
+.note.bad{border-left-color:var(--stop)}
+.note .lb{font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--warn); display:block;
+  margin-bottom:5px}
+.note.bad .lb{color:var(--stop)}
+strong{font-weight:700}
+.mark{background:var(--zone-soft); padding:0 3px; border-radius:3px}
+.two{display:grid; gap:20px; grid-template-columns:1fr 1fr}
+@media (max-width:760px){.two{grid-template-columns:1fr}}
+.tblbox{overflow-x:auto}
+.ask{font-family:"IBM Plex Mono",monospace; font-size:13px; line-height:2.1;
+  white-space:pre; color:var(--ink2)}
+hr{border:0; border-top:1px solid var(--line); margin:0}
+a{color:var(--sell)}
+:focus-visible{outline:2px solid var(--sell); outline-offset:2px}
+@media (prefers-reduced-motion:no-preference){
+  .chartbox svg .anim{animation:fade .5s ease both}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+}
+.fig{display:block; max-width:100%; height:auto}
+.figwrap{overflow-x:auto; padding:clamp(14px,3vw,24px)}
+.sbs{display:grid; gap:18px; grid-template-columns:1fr 1fr}
+@media (max-width:840px){.sbs{grid-template-columns:1fr}}
+.tag{font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:700;
+  letter-spacing:.14em; text-transform:uppercase; padding:14px clamp(14px,3vw,24px) 0}
+.tag.old{color:var(--stop)} .tag.new{color:var(--be)}
+.cap{font-size:14px; color:var(--ink2); line-height:1.75;
+  padding:0 clamp(16px,3vw,26px) 18px}
+figure{margin:0}
+figcaption{font-size:14px; color:var(--ink2); line-height:1.75;
+  padding:12px clamp(16px,3vw,26px) 18px}
+</style>
+<div class="wrap">
+<header class="top stack g16">
+  <span class="eyebrow">llmfx / 抵抗帯トレード</span>
+  <h1>損切りはどこへ動くか</h1>
+  <p class="lede prose">帯の指値と買い増しで、損切りの<strong>線は共有されています</strong>。
+  違うのは約定値からその線までの<strong>距離</strong>だけ。以前ここに、共有していない
+  経路が 1 本ありました。4 つの場面で順に確認します。</p>
+</header>
+
+<div class="stack g64">
+
+<section class="stack g24">
+  <div class="sechead">
+    <span class="eyebrow">場面 1</span>
+    <h2>帯で入った瞬間 — 遠いほうが採られる</h2>
+  </div>
+  <p class="prose">損切りの候補は 2 本あります。<strong>帯の外 1.5 ATR</strong> と、
+  <strong>約定値から 2.0 ATR</strong> の下限。<span class="mark">遠いほう</span>が採られます。
+  近いほうを採ると、足の中のどちらが先に付いたかという仮定だけで符号が変わる領域に入るためです。</p>
+  <div class="panel"><div class="caphead"><span class="t">帯の指値と損切りの初期位置</span><span class="m">ATR = 0.10 / 買い建玉</span></div><div class="chartbox" id="c-place" role="img" aria-label="抵抗帯 100.00 で買い、損切りの候補 2 本のうち遠い 99.80 が採られる図"></div><div class="legend" id="l-place"></div></div>
+  <p class="prose">この例では帯基準が 99.85、下限が 99.80。<strong>99.80 が採られてリスク幅は
+  2.0 ATR</strong> になります。実データでの中央値も 2.4 ATR で、ほぼこの形です。</p>
+</section>
+
+<section class="stack g24">
+  <div class="sechead">
+    <span class="eyebrow">場面 2</span>
+    <h2>1 つ前の安値へ引き上げる — 最新ではない</h2>
+  </div>
+  <p class="prose">安値が切り上がるたびに損切りを動かします。ただし<strong>置くのは 1 つ前の安値</strong>。
+  最新の安値に置くと、トレンドが壊れていない普通のより戻しで刺さります。</p>
+  <div class="panel"><div class="caphead"><span class="t">損切りの引き上げ</span><span class="m">安値2 → 安値1 へ / 安値3 → 安値2 へ</span></div><div class="chartbox" id="c-trail" role="img" aria-label="安値が切り上がるたびに損切りが 1 つ前の安値へ移動する図"></div><div class="legend" id="l-trail"></div></div>
+  <p class="prose">安値2(100.34)が確定した時点で損切りは <strong>安値1(100.12)</strong> へ。
+  安値3(100.60)が確定したら <strong>安値2(100.34)</strong> へ。
+  常に 1 つ後ろを追いかけます。動くのは有利な向きだけで、下がることはありません。</p>
+</section>
+
+<section class="stack g24">
+  <div class="sechead">
+    <span class="eyebrow">場面 3</span>
+    <h2>買い増しは同じ線を共有する — 距離だけが伸びる</h2>
+  </div>
+  <p class="prose">ここがあなたの確認したかった点です。<strong>線は 1 本しかありません。</strong>
+  買い増しは建玉の損切りをそのまま引き継ぎます。ただし約定値が先にあるので、
+  <strong>そこまでの距離は約 2 倍</strong>になります。</p>
+  <div class="panel">
+    <div class="caphead"><span class="t">同じ線、違う距離</span>
+      <span class="m">損切り 100.12 / ATR = 0.10</span></div>
+    <figure>
+    <div class="figwrap">
+    <svg class="fig" viewBox="0 0 720 300" width="720" height="300" role="img"
+         aria-label="帯の指値と買い増しが同じ損切り線を共有し、そこまでの距離が 2.0 ATR と 4.0 ATR で異なることを示す図">
+      <line x1="60" y1="110" x2="640" y2="110" stroke="var(--muted)" stroke-width="2"
+            stroke-dasharray="6 5"/>
+      <text x="648" y="114" fill="var(--muted)" font-size="12"
+            font-family="IBM Plex Mono, monospace">買い増し 100.52</text>
+      <line x1="60" y1="170" x2="400" y2="170" stroke="var(--muted)" stroke-width="2"
+            stroke-dasharray="6 5"/>
+      <text x="60" y="160" fill="var(--muted)" font-size="12"
+            font-family="IBM Plex Mono, monospace">帯の指値 100.00</text>
+      <line x1="60" y1="230" x2="640" y2="230" stroke="var(--stop)" stroke-width="3"/>
+      <text x="648" y="234" fill="var(--stop)" font-size="12" font-weight="600"
+            font-family="IBM Plex Mono, monospace">損切り 100.12</text>
+      <text x="60" y="252" fill="var(--stop)" font-size="12" font-weight="600"
+            font-family="IBM Plex Mono, monospace">線は 1 本だけ</text>
+
+      <line x1="150" y1="170" x2="150" y2="230" stroke="var(--sell)" stroke-width="2"/>
+      <line x1="143" y1="170" x2="157" y2="170" stroke="var(--sell)" stroke-width="2"/>
+      <line x1="143" y1="230" x2="157" y2="230" stroke="var(--sell)" stroke-width="2"/>
+      <text x="164" y="204" fill="var(--sell)" font-size="13" font-weight="600"
+            font-family="IBM Plex Mono, monospace">2.0 ATR</text>
+
+      <line x1="540" y1="110" x2="540" y2="230" stroke="var(--buy)" stroke-width="2"/>
+      <line x1="533" y1="110" x2="547" y2="110" stroke="var(--buy)" stroke-width="2"/>
+      <line x1="533" y1="230" x2="547" y2="230" stroke="var(--buy)" stroke-width="2"/>
+      <text x="554" y="174" fill="var(--buy)" font-size="13" font-weight="600"
+            font-family="IBM Plex Mono, monospace">4.0 ATR</text>
+
+      <circle cx="120" cy="170" r="5" fill="var(--sell)"/>
+      <circle cx="510" cy="110" r="5" fill="var(--buy)"/>
+      <text x="60" y="40" fill="var(--ink2)" font-size="13"
+            font-family="IBM Plex Mono, monospace">1 単位あたりの賭け金が 2 倍になる</text>
+      <text x="60" y="62" fill="var(--muted)" font-size="12.5"
+            font-family="IBM Plex Mono, monospace">損切りが来ると、両方とも同じ足で決済される</text>
+    </svg>
+    </div>
+    <figcaption>買い増しは新しい賭けではなく、同じ賭けの積み増しです。
+    損切りが 1 本しかない以上、外れたときは必ず全部が一緒に飛びます。</figcaption>
+    </figure>
+  </div>
+  <p class="prose">実データでも、<strong>買い増しの 100% が親と同じ足で決済</strong>されていました
+  (6 銘柄・17,366 件)。<strong>親が負けたときに買い増しだけ勝つのは 0.2〜0.8%。</strong>
+  上振れは共有できますが、下振れは必ず一緒に食らいます。</p>
+</section>
+
+<section class="stack g24">
+  <div class="sechead">
+    <span class="eyebrow">場面 4 / バグ</span>
+    <h2>下限に届かないとき — 存在しない線で割っていた</h2>
+  </div>
+  <p class="prose">損切りが引き上がって買い増しの位置に近づくと、
+  下限(2.0 ATR)に届かない場面が出ます。<strong>ここだけ共有が切れていました。</strong></p>
+  <div class="sbs">
+    <div class="panel">
+      <span class="tag old">旧 — 分母だけを動かす</span>
+      <figure>
+      <div class="figwrap">
+      <svg class="fig" viewBox="0 0 400 260" width="400" height="260" role="img"
+           aria-label="旧コードは実在しない損切り線で R を計算し、負けを 0.60 R と記録していた">
+        <line x1="30" y1="60" x2="300" y2="60" stroke="var(--muted)" stroke-width="2"
+              stroke-dasharray="6 5"/>
+        <text x="30" y="50" fill="var(--muted)" font-size="11.5"
+              font-family="IBM Plex Mono, monospace">買い増し 100.52</text>
+        <line x1="30" y1="130" x2="300" y2="130" stroke="var(--stop)" stroke-width="3"/>
+        <text x="306" y="127" fill="var(--stop)" font-size="11.5" font-weight="600"
+              font-family="IBM Plex Mono, monospace">100.40</text>
+        <text x="306" y="142" fill="var(--stop)" font-size="10.5"
+              font-family="IBM Plex Mono, monospace">決済はここ</text>
+        <line x1="30" y1="180" x2="300" y2="180" stroke="var(--stop)" stroke-width="2"
+              stroke-dasharray="3 4" opacity=".75"/>
+        <text x="306" y="177" fill="var(--stop)" font-size="11.5" opacity=".85"
+              font-family="IBM Plex Mono, monospace">100.32</text>
+        <text x="306" y="192" fill="var(--stop)" font-size="10.5" opacity=".85"
+              font-family="IBM Plex Mono, monospace">実在しない</text>
+        <line x1="80" y1="60" x2="80" y2="130" stroke="var(--ink2)" stroke-width="2"/>
+        <line x1="73" y1="130" x2="87" y2="130" stroke="var(--ink2)" stroke-width="2"/>
+        <text x="94" y="99" fill="var(--ink2)" font-size="12"
+              font-family="IBM Plex Mono, monospace">本当の損失 1.2 ATR</text>
+        <line x1="210" y1="60" x2="210" y2="180" stroke="var(--stop)" stroke-width="2"
+              opacity=".7"/>
+        <line x1="203" y1="180" x2="217" y2="180" stroke="var(--stop)" stroke-width="2"
+              opacity=".7"/>
+        <text x="224" y="122" fill="var(--stop)" font-size="12" opacity=".85"
+              font-family="IBM Plex Mono, monospace">R の分母 2.0 ATR</text>
+        <text x="30" y="228" fill="var(--stop)" font-size="13" font-weight="700"
+              font-family="IBM Plex Mono, monospace">記録 −0.60 R</text>
+        <text x="30" y="246" fill="var(--muted)" font-size="11.5"
+              font-family="IBM Plex Mono, monospace">実際は満額の負け</text>
+      </svg>
+      </div>
+      <figcaption>分母が実際の決済位置より遠いので、負けが浅く記録されます。</figcaption>
+      </figure>
+    </div>
+    <div class="panel">
+      <span class="tag new">新 — 建てない</span>
+      <figure>
+      <div class="figwrap">
+      <svg class="fig" viewBox="0 0 400 260" width="400" height="260" role="img"
+           aria-label="新コードは下限に届かない位置では買い増しを見送る">
+        <line x1="30" y1="60" x2="300" y2="60" stroke="var(--muted)" stroke-width="2"
+              stroke-dasharray="6 5" opacity=".45"/>
+        <text x="30" y="50" fill="var(--muted)" font-size="11.5" opacity=".7"
+              font-family="IBM Plex Mono, monospace">買い増しの候補 100.52</text>
+        <line x1="30" y1="130" x2="300" y2="130" stroke="var(--stop)" stroke-width="3"/>
+        <text x="306" y="127" fill="var(--stop)" font-size="11.5" font-weight="600"
+              font-family="IBM Plex Mono, monospace">100.40</text>
+        <text x="306" y="142" fill="var(--stop)" font-size="10.5"
+              font-family="IBM Plex Mono, monospace">建玉の損切り</text>
+        <line x1="80" y1="60" x2="80" y2="130" stroke="var(--be)" stroke-width="2"/>
+        <line x1="73" y1="60" x2="87" y2="60" stroke="var(--be)" stroke-width="2"/>
+        <line x1="73" y1="130" x2="87" y2="130" stroke="var(--be)" stroke-width="2"/>
+        <text x="94" y="99" fill="var(--be)" font-size="12"
+              font-family="IBM Plex Mono, monospace">1.2 ATR &lt; 下限 2.0 ATR</text>
+        <line x1="150" y1="46" x2="182" y2="76" stroke="var(--be)" stroke-width="3"
+              stroke-linecap="round"/>
+        <line x1="182" y1="46" x2="150" y2="76" stroke="var(--be)" stroke-width="3"
+              stroke-linecap="round"/>
+        <text x="30" y="228" fill="var(--be)" font-size="13" font-weight="700"
+              font-family="IBM Plex Mono, monospace">見送る</text>
+        <text x="30" y="246" fill="var(--muted)" font-size="11.5"
+              font-family="IBM Plex Mono, monospace">分母をいじって建てない</text>
+      </svg>
+      </div>
+      <figcaption>線は 1 本のまま。届かない位置では建てないので、共有が切れません。</figcaption>
+      </figure>
+    </div>
+  </div>
+  <div class="note bad">
+    <span class="lb">どれだけ起きていたか</span>
+    実データで買い増しの <strong>18〜22%</strong>、損切りで決済されたもののうち
+    <strong>37〜44%</strong> がこれに該当していました。向きは<strong>負けを浅く見せる側</strong>です。
+    以前報告した「買い増しの平均負けは −0.71 R で、親の −0.85 R より浅い」は、これが混ざった数字でした。
+  </div>
+</section>
+
+<section class="stack g24" id="after">
+  <div class="sechead">
+    <span class="eyebrow">直した後</span>
+    <h2>数字がどう動いたか</h2>
+  </div>
+  <div class="panel"><div class="caphead"><span class="t">銘柄ごと — 最初の建玉と買い増し</span><span class="m">開発用 2000-2019 / 推し量り / 買い増し 最大 3 回</span></div><div class="tblbox pad"><table class="tbl"><thead><tr><th>銘柄</th><th>群</th><th class="n">zone 期待値</th><th class="n">zone R/月</th><th class="n">add 期待値</th><th class="n">add R/月</th><th class="n">add の t</th><th class="n">差</th></tr></thead><tbody><tr><td class="mono">gbpjpy</td><td>使った4</td><td class="n pos">+0.324</td><td class="n pos">+2.45</td><td class="n pos"><strong>+0.152</strong></td><td class="n pos">+2.02</td><td class="n">+4.38</td><td class="n neg">-0.172</td></tr><tr><td class="mono">gbpusd</td><td>未使用6</td><td class="n pos">+0.225</td><td class="n pos">+1.61</td><td class="n pos"><strong>+0.061</strong></td><td class="n pos">+0.74</td><td class="n">+2.11</td><td class="n neg">-0.164</td></tr><tr><td class="mono">eurusd</td><td>使った4</td><td class="n pos">+0.149</td><td class="n pos">+0.98</td><td class="n neg"><strong>-0.028</strong></td><td class="n neg">-0.30</td><td class="n">-1.02</td><td class="n neg">-0.177</td></tr><tr><td class="mono">usdjpy</td><td>使った4</td><td class="n pos">+0.132</td><td class="n pos">+0.87</td><td class="n neg"><strong>-0.028</strong></td><td class="n neg">-0.31</td><td class="n">-0.92</td><td class="n neg">-0.160</td></tr><tr><td class="mono">audjpy</td><td>未使用6</td><td class="n pos">+0.123</td><td class="n pos">+0.91</td><td class="n pos"><strong>+0.088</strong></td><td class="n pos">+1.14</td><td class="n">+2.83</td><td class="n neg">-0.035</td></tr><tr><td class="mono">eurjpy</td><td>未使用6</td><td class="n pos">+0.074</td><td class="n pos">+0.53</td><td class="n neg"><strong>-0.051</strong></td><td class="n neg">-0.62</td><td class="n">-2.00</td><td class="n neg">-0.125</td></tr><tr><td class="mono">audusd</td><td>使った4</td><td class="n pos">+0.063</td><td class="n pos">+0.48</td><td class="n neg"><strong>-0.038</strong></td><td class="n neg">-0.48</td><td class="n">-1.33</td><td class="n neg">-0.101</td></tr><tr><td class="mono">usdchf</td><td>未使用6</td><td class="n pos">+0.037</td><td class="n pos">+0.29</td><td class="n neg"><strong>-0.090</strong></td><td class="n neg">-1.14</td><td class="n">-3.32</td><td class="n neg">-0.127</td></tr><tr><td class="mono">usdcad</td><td>未使用6</td><td class="n neg">-0.107</td><td class="n neg">-0.82</td><td class="n neg"><strong>-0.127</strong></td><td class="n neg">-1.47</td><td class="n">-5.30</td><td class="n neg">-0.020</td></tr><tr><td class="mono">nzdusd</td><td>未使用6</td><td class="n neg">-0.119</td><td class="n neg">-0.96</td><td class="n neg"><strong>-0.207</strong></td><td class="n neg">-2.69</td><td class="n">-8.86</td><td class="n neg">-0.088</td></tr></tbody></table></div></div>
+<p class="prose"><strong>買い増しの符号は、その銘柄の最初の建玉の符号にぶら下がっています。</strong>
+zone が +0.12 を超える 3 銘柄(GBP/JPY・GBP/USD・AUD/JPY)では買い増しも黒字で、
+しかも件数が多いぶん <strong>R/月 への寄与は最初の建玉と同じかそれ以上</strong>。
+GBP/JPY は zone +2.45 に add +2.02 が乗ります。</p>
+<p class="prose">下回る 7 銘柄ではすべて赤字になります。差(add − zone)は
+<strong>−0.02 〜 −0.18、中央 −0.13</strong>。買い増しは倍率であって、
+符号を変える力はありません。<span class="mark">最初の建玉が持っていた余裕を食い潰すだけ</span>です。</p>
+<div class="note">
+  <span class="lb">直した効果</span>
+  損切りの共有を直したことで、買い増しの数字は<strong>全銘柄でわずかに悪化</strong>しました
+  (1 本目で −0.01 〜 −0.03)。負けが浅く記録されていた分が戻った形です。
+  最初の建玉は 1 件も動いていません。
+</div>
+<div class="note bad">
+  <span class="lb">合計で見ると</span>
+  条件探しに使っていない 6 銘柄で、最初の建玉だけなら <strong>+1.56 R/月</strong>。
+  買い増しを足すと <strong>−2.48 R/月</strong> になります。
+  効く 3 銘柄の黒字より、効かない銘柄の赤字のほうが大きい。
+  そして<strong>どの銘柄が効くかは、事前には分かりません。</strong>
+  この見分けを開発用データで付けるのが、これまで 10 回崩れてきた形そのものです。
+</div>
+</section>
+
+</div></div>
+<script>
+const NS="http://www.w3.org/2000/svg";
+const el=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e;};
+const cv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const txt=(o,s)=>{const t=el("text",o);t.textContent=s;return t;};
+
+function draw(box, lg, cands, levels, marks, opt){
+  // **枠が無ければ黙って帰る。**節を差し替えたときに呼び出しだけ残ると、
+  // ここで例外になり **以降の図が全部止まる**(実際に止めた)。
+  if(!box || !cands || !cands.length) return;
+  opt=opt||{};
+  const n=cands.length, step=Math.max(11,Math.min(19,880/n));
+  const padL=10,padR=136,padT=30,padB=22;
+  const W=Math.round(padL+n*step+padR), H=opt.h||330;
+  let lo=Infinity,hi=-Infinity;
+  for(const c of cands){lo=Math.min(lo,c.l);hi=Math.max(hi,c.h);}
+  for(const v of levels)if(v.y!=null){lo=Math.min(lo,v.y);hi=Math.max(hi,v.y);}
+  const sp=(hi-lo)||1,m=sp*0.11; lo-=m; hi+=m;
+  const Y=p=>padT+(hi-p)/(hi-lo)*(H-padT-padB);
+  const X=i=>padL+(i+0.5)*step;
+  const svg=el("svg",{viewBox:`0 0 ${W} ${H}`,width:W,height:H,role:"img",
+    "aria-label":opt.alt||"仕様の模式図",class:"anim"});
+
+  for(const b of (opt.bands||[]))
+    svg.appendChild(el("rect",{x:padL,y:padT,width:W-padR-padL,
+      height:H-padT-padB,fill:"none"}));
+  for(const z of (opt.zones||[]))
+    svg.appendChild(el("rect",{x:X(z.from)-step/2,y:padT,
+      width:(z.to-z.from+1)*step,height:H-padT-padB,
+      fill:cv(z.c),opacity:z.op==null?.5:z.op}));
+
+  // 水準線
+  const tags=[];
+  for(const v of levels){
+    const a=v.from==null?padL:X(v.from)-step/2;
+    const b=v.to==null?W-padR:X(v.to)+step/2;
+    svg.appendChild(el("line",{x1:a,y1:Y(v.y),x2:b,y2:Y(v.y),stroke:cv(v.c),
+      "stroke-width":v.w||2,"stroke-dasharray":v.dash||"","stroke-linecap":"round",
+      opacity:v.op==null?1:v.op}));
+    if(v.t)tags.push({y:Y(v.y),t:v.t,c:v.c,x:b});
+  }
+  // ろうそく
+  for(let i=0;i<n;i++){
+    const c=cands[i],up=c.c>=c.o,x=X(i),bw=Math.max(3,step*0.6),col=cv("--candle");
+    svg.appendChild(el("line",{x1:x,y1:Y(c.h),x2:x,y2:Y(c.l),stroke:col,"stroke-width":1.2}));
+    const y0=Y(Math.max(c.o,c.c)),y1=Y(Math.min(c.o,c.c));
+    svg.appendChild(el("rect",{x:x-bw/2,y:y0,width:bw,height:Math.max(1.2,y1-y0),
+      fill:up?cv("--candle-fill"):col,stroke:col,"stroke-width":1.2}));
+  }
+  // 折り返しの札
+  for(const s of (opt.swings||[])){
+    if(!s[2])continue;
+    const up=s[3]==="high",x=X(s[0]),y=Y(s[1]);
+    svg.appendChild(el("circle",{cx:x,cy:y,r:3,fill:cv("--muted")}));
+    svg.appendChild(txt({x:x,y:up?y-9:y+16,fill:cv("--muted"),"font-size":11,
+      "font-family":"IBM Plex Mono, monospace","text-anchor":"middle",
+      "font-weight":600},s[2]));
+  }
+  // 印
+  for(const k of marks){
+    const x=X(k.i),y=Y(k.y),c=cv(k.c);
+    if(k.kind==="entry"){
+      const d=k.down?1:-1;
+      svg.appendChild(el("path",{d:`M ${x} ${y} l -6 ${-11*d} l 12 0 Z`,fill:c}));
+      svg.appendChild(el("line",{x1:x,y1:y-11*d,x2:x,y2:y-26*d,stroke:c,"stroke-width":2}));
+      svg.appendChild(txt({x:x,y:y-31*d+(d<0?11:0),fill:c,"text-anchor":"middle",
+        "font-size":12,"font-family":"IBM Plex Mono, monospace","font-weight":700},k.t));
+    }else if(k.kind==="ghost"){
+      svg.appendChild(el("circle",{cx:x,cy:y,r:5,fill:"none",stroke:c,
+        "stroke-width":2,"stroke-dasharray":"3 3"}));
+      svg.appendChild(txt({x:x+10,y:y+4,fill:c,"font-size":11.5,
+        "font-family":"IBM Plex Mono, monospace"},k.t));
+    }else{
+      svg.appendChild(el("circle",{cx:x,cy:y,r:5,fill:c,stroke:cv("--panel"),"stroke-width":2}));
+      svg.appendChild(txt({x:x+10,y:y+4,fill:c,"font-size":12,
+        "font-family":"IBM Plex Mono, monospace","font-weight":600},k.t));
+    }
+  }
+  // 右の札。重なりを押し広げる
+  tags.sort((a,b)=>a.y-b.y);
+  for(let i=1;i<tags.length;i++)
+    if(tags[i].y-tags[i-1].y<17)tags[i].y=tags[i-1].y+17;
+  for(const p of tags)
+    svg.appendChild(txt({x:W-padR+10,y:p.y+4,fill:cv(p.c),"font-size":12,
+      "font-family":"IBM Plex Mono, monospace","font-weight":600},p.t));
+  box.innerHTML=""; box.appendChild(svg);
+  if(lg){
+    lg.innerHTML="";
+    for(const v of (opt.keys||levels)){
+      if(!v.t)continue;
+      const s=document.createElement("span"); s.className="key";
+      const i=document.createElement("i"); i.className="sw";
+      i.style.borderTopColor=cv(v.c);
+      if(v.dash)i.style.borderTopStyle="dashed";
+      s.appendChild(i); s.appendChild(document.createTextNode(v.k||v.t));
+      lg.appendChild(s);
+    }
+  }
+}
+
+const F = {"place": {"candles": [{"o": 99.55, "h": 99.606, "l": 99.522, "c": 99.593, "t": ""}, {"o": 99.593, "h": 99.674, "l": 99.57, "c": 99.635, "t": ""}, {"o": 99.635, "h": 99.7, "l": 99.61, "c": 99.677, "t": ""}, {"o": 99.677, "h": 99.727, "l": 99.669, "c": 99.72, "t": ""}, {"o": 99.72, "h": 99.749, "l": 99.659, "c": 99.69, "t": ""}, {"o": 99.69, "h": 99.723, "l": 99.641, "c": 99.66, "t": ""}, {"o": 99.66, "h": 99.668, "l": 99.614, "c": 99.63, "t": ""}, {"o": 99.63, "h": 99.748, "l": 99.615, "c": 99.722, "t": ""}, {"o": 99.722, "h": 99.869, "l": 99.665, "c": 99.815, "t": ""}, {"o": 99.815, "h": 99.93, "l": 99.789, "c": 99.907, "t": ""}, {"o": 99.907, "h": 100.019, "l": 99.887, "c": 100.0, "t": ""}, {"o": 100.0, "h": 100.058, "l": 99.987, "c": 100.035, "t": ""}, {"o": 100.035, "h": 100.088, "l": 99.995, "c": 100.07, "t": ""}, {"o": 100.07, "h": 100.128, "l": 100.057, "c": 100.105, "t": ""}, {"o": 100.105, "h": 100.153, "l": 100.091, "c": 100.14, "t": ""}, {"o": 100.14, "h": 100.153, "l": 100.106, "c": 100.12, "t": ""}, {"o": 100.12, "h": 100.151, "l": 100.067, "c": 100.1, "t": ""}, {"o": 100.1, "h": 100.115, "l": 100.071, "c": 100.08, "t": ""}, {"o": 100.08, "h": 100.087, "l": 100.046, "c": 100.06, "t": ""}, {"o": 100.06, "h": 100.146, "l": 100.038, "c": 100.108, "t": ""}, {"o": 100.108, "h": 100.191, "l": 100.071, "c": 100.156, "t": ""}, {"o": 100.156, "h": 100.212, "l": 100.147, "c": 100.204, "t": ""}, {"o": 100.204, "h": 100.275, "l": 100.179, "c": 100.252, "t": ""}, {"o": 100.252, "h": 100.341, "l": 100.228, "c": 100.3, "t": ""}, {"o": 100.3, "h": 100.314, "l": 100.27, "c": 100.3, "t": ""}], "band": 100.0, "atr": 0.1, "entry": 100.0, "entry_at": 11, "band_stop": 99.85, "floor_stop": 99.8}, "trail": {"candles": [{"o": 100.0, "h": 100.075, "l": 99.969, "c": 100.06, "t": ""}, {"o": 100.06, "h": 100.164, "l": 100.035, "c": 100.12, "t": ""}, {"o": 100.12, "h": 100.206, "l": 100.093, "c": 100.18, "t": ""}, {"o": 100.18, "h": 100.248, "l": 100.171, "c": 100.24, "t": ""}, {"o": 100.24, "h": 100.337, "l": 100.201, "c": 100.3, "t": ""}, {"o": 100.3, "h": 100.337, "l": 100.234, "c": 100.255, "t": ""}, {"o": 100.255, "h": 100.264, "l": 100.192, "c": 100.21, "t": ""}, {"o": 100.21, "h": 100.228, "l": 100.155, "c": 100.165, "t": ""}, {"o": 100.165, "h": 100.203, "l": 100.08, "c": 100.12, "t": ""}, {"o": 100.12, "h": 100.22, "l": 100.097, "c": 100.2, "t": ""}, {"o": 100.2, "h": 100.297, "l": 100.181, "c": 100.28, "t": ""}, {"o": 100.28, "h": 100.391, "l": 100.262, "c": 100.36, "t": ""}, {"o": 100.36, "h": 100.465, "l": 100.306, "c": 100.44, "t": ""}, {"o": 100.44, "h": 100.552, "l": 100.422, "c": 100.52, "t": ""}, {"o": 100.52, "h": 100.533, "l": 100.471, "c": 100.484, "t": ""}, {"o": 100.484, "h": 100.498, "l": 100.432, "c": 100.448, "t": ""}, {"o": 100.448, "h": 100.483, "l": 100.374, "c": 100.412, "t": ""}, {"o": 100.412, "h": 100.429, "l": 100.366, "c": 100.376, "t": ""}, {"o": 100.376, "h": 100.384, "l": 100.323, "c": 100.34, "t": ""}, {"o": 100.34, "h": 100.458, "l": 100.314, "c": 100.413, "t": ""}, {"o": 100.413, "h": 100.527, "l": 100.37, "c": 100.487, "t": ""}, {"o": 100.487, "h": 100.569, "l": 100.477, "c": 100.56, "t": ""}, {"o": 100.56, "h": 100.661, "l": 100.531, "c": 100.633, "t": ""}, {"o": 100.633, "h": 100.755, "l": 100.606, "c": 100.707, "t": ""}, {"o": 100.707, "h": 100.796, "l": 100.671, "c": 100.78, "t": ""}, {"o": 100.78, "h": 100.792, "l": 100.737, "c": 100.744, "t": ""}, {"o": 100.744, "h": 100.771, "l": 100.679, "c": 100.708, "t": ""}, {"o": 100.708, "h": 100.726, "l": 100.652, "c": 100.672, "t": ""}, {"o": 100.672, "h": 100.691, "l": 100.616, "c": 100.636, "t": ""}, {"o": 100.636, "h": 100.65, "l": 100.592, "c": 100.6, "t": ""}, {"o": 100.6, "h": 100.706, "l": 100.551, "c": 100.683, "t": ""}, {"o": 100.683, "h": 100.812, "l": 100.657, "c": 100.767, "t": ""}, {"o": 100.767, "h": 100.87, "l": 100.745, "c": 100.85, "t": ""}, {"o": 100.85, "h": 100.947, "l": 100.835, "c": 100.933, "t": ""}, {"o": 100.933, "h": 101.067, "l": 100.879, "c": 101.017, "t": ""}, {"o": 101.017, "h": 101.138, "l": 100.995, "c": 101.1, "t": ""}, {"o": 101.1, "h": 101.109, "l": 101.082, "c": 101.1, "t": ""}], "band": 100.0, "atr": 0.1, "entry": 100.0, "entry_at": 0, "first_stop": 99.8, "swings": [[5, 100.3, "高値1", "high"], [9, 100.12, "安値1", "low"], [14, 100.52, "高値2", "high"], [19, 100.34, "安値2", "low"], [25, 100.78, "高値3", "high"], [30, 100.6, "安値3", "low"]], "stop_after_low2": 100.12, "stop_after_low3": 100.34, "move_at": 19, "move2_at": 30}, "share": {"candles": [{"o": 100.0, "h": 100.075, "l": 99.969, "c": 100.06, "t": ""}, {"o": 100.06, "h": 100.164, "l": 100.035, "c": 100.12, "t": ""}, {"o": 100.12, "h": 100.206, "l": 100.093, "c": 100.18, "t": ""}, {"o": 100.18, "h": 100.248, "l": 100.171, "c": 100.24, "t": ""}, {"o": 100.24, "h": 100.337, "l": 100.201, "c": 100.3, "t": ""}, {"o": 100.3, "h": 100.337, "l": 100.234, "c": 100.255, "t": ""}, {"o": 100.255, "h": 100.264, "l": 100.192, "c": 100.21, "t": ""}, {"o": 100.21, "h": 100.228, "l": 100.155, "c": 100.165, "t": ""}, {"o": 100.165, "h": 100.203, "l": 100.08, "c": 100.12, "t": ""}, {"o": 100.12, "h": 100.22, "l": 100.097, "c": 100.2, "t": ""}, {"o": 100.2, "h": 100.297, "l": 100.181, "c": 100.28, "t": ""}, {"o": 100.28, "h": 100.391, "l": 100.262, "c": 100.36, "t": ""}, {"o": 100.36, "h": 100.465, "l": 100.306, "c": 100.44, "t": ""}, {"o": 100.44, "h": 100.552, "l": 100.422, "c": 100.52, "t": ""}, {"o": 100.52, "h": 100.533, "l": 100.471, "c": 100.484, "t": ""}, {"o": 100.484, "h": 100.498, "l": 100.432, "c": 100.448, "t": ""}, {"o": 100.448, "h": 100.483, "l": 100.374, "c": 100.412, "t": ""}, {"o": 100.412, "h": 100.429, "l": 100.366, "c": 100.376, "t": ""}, {"o": 100.376, "h": 100.384, "l": 100.323, "c": 100.34, "t": ""}, {"o": 100.34, "h": 100.421, "l": 100.319, "c": 100.385, "t": ""}, {"o": 100.385, "h": 100.463, "l": 100.349, "c": 100.43, "t": ""}, {"o": 100.43, "h": 100.482, "l": 100.422, "c": 100.475, "t": ""}, {"o": 100.475, "h": 100.542, "l": 100.451, "c": 100.52, "t": ""}, {"o": 100.52, "h": 100.645, "l": 100.492, "c": 100.596, "t": ""}, {"o": 100.596, "h": 100.688, "l": 100.56, "c": 100.671, "t": ""}, {"o": 100.671, "h": 100.764, "l": 100.662, "c": 100.747, "t": ""}, {"o": 100.747, "h": 100.859, "l": 100.708, "c": 100.823, "t": ""}, {"o": 100.823, "h": 100.923, "l": 100.795, "c": 100.899, "t": ""}, {"o": 100.899, "h": 100.999, "l": 100.872, "c": 100.974, "t": ""}, {"o": 100.974, "h": 101.069, "l": 100.963, "c": 101.05, "t": ""}, {"o": 101.05, "h": 101.072, "l": 101.003, "c": 101.05, "t": ""}], "atr": 0.1, "zone_entry": 100.0, "zone_at": 0, "add_entry": 100.52, "add_at": 23, "stop": 100.12, "risk_zone": 0.2, "risk_add": 0.4}, "floorbug": {"candles": [{"o": 100.2, "h": 100.279, "l": 100.169, "c": 100.265, "t": ""}, {"o": 100.265, "h": 100.373, "l": 100.241, "c": 100.33, "t": ""}, {"o": 100.33, "h": 100.42, "l": 100.303, "c": 100.395, "t": ""}, {"o": 100.395, "h": 100.468, "l": 100.386, "c": 100.46, "t": ""}, {"o": 100.46, "h": 100.487, "l": 100.406, "c": 100.435, "t": ""}, {"o": 100.435, "h": 100.465, "l": 100.393, "c": 100.41, "t": ""}, {"o": 100.41, "h": 100.417, "l": 100.37, "c": 100.385, "t": ""}, {"o": 100.385, "h": 100.4, "l": 100.352, "c": 100.36, "t": ""}, {"o": 100.36, "h": 100.434, "l": 100.323, "c": 100.4, "t": ""}, {"o": 100.4, "h": 100.454, "l": 100.384, "c": 100.44, "t": ""}, {"o": 100.44, "h": 100.493, "l": 100.427, "c": 100.48, "t": ""}, {"o": 100.48, "h": 100.542, "l": 100.467, "c": 100.52, "t": ""}, {"o": 100.52, "h": 100.535, "l": 100.467, "c": 100.5, "t": ""}, {"o": 100.5, "h": 100.519, "l": 100.469, "c": 100.48, "t": ""}, {"o": 100.48, "h": 100.491, "l": 100.449, "c": 100.46, "t": ""}, {"o": 100.46, "h": 100.472, "l": 100.426, "c": 100.44, "t": ""}, {"o": 100.44, "h": 100.5, "l": 100.406, "c": 100.468, "t": ""}, {"o": 100.468, "h": 100.511, "l": 100.459, "c": 100.496, "t": ""}, {"o": 100.496, "h": 100.531, "l": 100.481, "c": 100.524, "t": ""}, {"o": 100.524, "h": 100.582, "l": 100.507, "c": 100.552, "t": ""}, {"o": 100.552, "h": 100.608, "l": 100.522, "c": 100.58, "t": ""}, {"o": 100.58, "h": 100.586, "l": 100.543, "c": 100.55, "t": ""}, {"o": 100.55, "h": 100.569, "l": 100.5, "c": 100.52, "t": ""}, {"o": 100.52, "h": 100.553, "l": 100.471, "c": 100.49, "t": ""}, {"o": 100.49, "h": 100.501, "l": 100.436, "c": 100.46, "t": ""}, {"o": 100.46, "h": 100.471, "l": 100.424, "c": 100.43, "t": ""}, {"o": 100.43, "h": 100.455, "l": 100.374, "c": 100.4, "t": ""}, {"o": 100.4, "h": 100.416, "l": 100.381, "c": 100.4, "t": ""}], "atr": 0.1, "add_entry": 100.52, "add_at": 12, "real_stop": 100.4, "ghost_stop": 100.32, "exit_at": 27}};
+const A = (v)=>v;
+
+// 場面 1: 帯で入った瞬間
+(function(){
+  const f=F.place;
+  draw(document.getElementById("c-place"), document.getElementById("l-place"),
+    f.candles,
+    [{y:f.band,c:"--zone",w:2.5,t:"抵抗帯 "+f.band.toFixed(2),k:"抵抗帯"},
+     {y:f.band_stop,c:"--muted",dash:"5 5",t:"帯から 1.5 ATR → "+f.band_stop.toFixed(2),k:"候補: 帯から 1.5 ATR"},
+     {y:f.floor_stop,c:"--stop",w:3,t:"採用 "+f.floor_stop.toFixed(2),k:"採用: 約定値から 2.0 ATR"}],
+    [{i:f.entry_at,y:f.entry,c:"--buy",kind:"entry",t:"買い"}],
+    {h:320,alt:"帯で買い、遠いほうの損切りが採られる"});
+})();
+
+// 場面 2: 1 つ前へ引き上げる
+(function(){
+  const f=F.trail;
+  draw(document.getElementById("c-trail"), document.getElementById("l-trail"),
+    f.candles,
+    [{y:f.first_stop,c:"--muted",dash:"5 5",w:2,to:f.move_at-1,t:"最初 "+f.first_stop.toFixed(2),k:"最初の損切り"},
+     {y:f.stop_after_low2,c:"--stop",w:3,from:f.move_at,to:f.move2_at-1,t:"→ 安値1",k:"安値2 が出たら 安値1 へ"},
+     {y:f.stop_after_low3,c:"--stop",w:3,from:f.move2_at,t:"→ 安値2",k:"安値3 が出たら 安値2 へ"}],
+    [{i:f.entry_at,y:f.entry,c:"--buy",kind:"entry",t:"買い"}],
+    {h:360,swings:f.swings,alt:"損切りが 1 つ前の安値へ順に引き上がる"});
+})();
+</script>
