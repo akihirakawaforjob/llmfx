@@ -273,6 +273,15 @@ def collect_swing_trades(
     dead: dict[str, bool] = {"top": False, "bottom": False}
     steps: dict[str, int] = {"top": 0, "bottom": 0}
     step_ix: dict[str, int] = {"top": -1, "bottom": -1}
+    band_at: dict[str, float | None] = {"top": None, "bottom": None}
+    """いま状態を持っている帯の水準。
+
+    **`"top"` / `"bottom"` は側の名前であって、帯そのものではない。**
+    窓が動けば帯の水準も動く。名前だけで状態を持つと、一度どこかの帯が
+    死んだきり `dead` が戻らず、それ以降すべての帯で跳ね返り側が発動
+    しなくなる(実測で 31,286 件中 39 件しか出なかった)。逆に `steps`
+    は永久に条件を満たし、ブレイク側が撃ち続ける。
+    """
     pid_seq = 0
     zone_hi: tuple[int, float] | None = None
     zone_lo: tuple[int, float] | None = None
@@ -689,6 +698,15 @@ def collect_swing_trades(
                 continue
 
             if zone_entry == "method":
+                # **帯が入れ替わったら状態を捨てる。**水準が動いたら
+                # それは別の帯なので、死んだかどうかも数え直す。
+                if (band_at[key] is None
+                        or abs(band_at[key] - level) > 1e-9):
+                    band_at[key] = level
+                    dead[key] = False
+                    steps[key] = 0
+                    step_ix[key] = -1
+                    touched[key] = None
                 # 帯へ届いたら、跳ね返り用の注文を置く。**すでに通過した
                 # 値**(執行足の直近の折り返し)なので、そのまま抜けても
                 # 発動しない。だから 24 本で切らず、帯が死ぬまで残す。

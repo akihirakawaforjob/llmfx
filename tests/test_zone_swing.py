@@ -782,3 +782,24 @@ def test_method_mode_bounce_order_survives_the_break() -> None:
 
     assert len(waits(meth)) > 0
     assert len(waits(short)) > 0
+
+
+def test_method_mode_resets_state_when_the_band_moves() -> None:
+    """帯の水準が動いたら、その側の状態を捨てる。
+
+    `"top"` / `"bottom"` は **側の名前であって帯そのものではない**。
+    名前だけで状態を持つと、一度どこかの帯が死んだきり `dead` が戻らず、
+    それ以降すべての帯で跳ね返り側が発動しなくなる。
+    """
+    _, ts = legs(zone_entry="method", zone_entry_max_atr=2.0,
+                 entry_signal="exec", stop_basis="band", stop_buffer_atr=1.5,
+                 min_stop_atr=2.0, max_flips=0, max_adds=0, max_open=4)
+    z = [t for t in ts if t.kind == "zone"]
+    assert z
+    fade = [t for t in z if (t.zone_key == "bottom") == t.long_side]
+    brk = [t for t in z if (t.zone_key == "bottom") != t.long_side]
+    assert fade, "跳ね返りが 1 件も出ていない"
+    assert brk, "ブレイクが 1 件も出ていない"
+    # 状態が戻らないと跳ね返りがほぼ消える。ここでは 1 割以上あるはず。
+    assert len(fade) / len(z) > 0.10, (
+        f"跳ね返りが {len(fade)}/{len(z)} しかない。状態が戻っていない")
