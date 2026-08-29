@@ -693,3 +693,32 @@ def test_add_never_records_a_stop_worse_than_an_earlier_leg() -> None:
         assert abs(t.entry - t.stop_at_entry) >= msa * t.atr - 1e-9, (
             f"下限に届かない買い増しが建っている: "
             f"{abs(t.entry - t.stop_at_entry) / t.atr:.3f} ATR")
+
+
+def test_add_after_break_only_adds_beyond_the_band() -> None:
+    """`add_after_break` は、帯を抜けた向こう側でしか買い増さない。
+
+    利用者の指摘: 帯へ向かう途中の切り上げでも足してしまうので、
+    単純なダマシや大口の防衛が成功したときに損切りだけが増える。
+    """
+    _, off = legs(max_adds=3, max_flips=0, reverse_entry=True)
+    _, on = legs(max_adds=3, max_flips=0, reverse_entry=True,
+                 add_after_break=True)
+
+    def beyond(t):
+        return (t.entry > t.zone_price) if t.long_side else (t.entry < t.zone_price)
+
+    a_off = [t for t in off if t.kind == "add"]
+    a_on = [t for t in on if t.kind == "add"]
+    assert a_off, "買い増しが 1 件も出ていない"
+    assert any(not beyond(t) for t in a_off), (
+        "絞る前に帯の手前の買い増しが無い。テストに歯が入っていない")
+    assert a_on, "絞ったら買い増しが全部消えた"
+    for t in a_on:
+        assert beyond(t), (
+            f"帯の手前で買い増している: {t.entry} vs 帯 {t.zone_price}")
+
+    # 最初の建玉は 1 件も変わらない。差は買い増しだけが作る。
+    z_off = [(t.position_id, t.entry_index) for t in off if t.kind == "zone"]
+    z_on = [(t.position_id, t.entry_index) for t in on if t.kind == "zone"]
+    assert z_off == z_on

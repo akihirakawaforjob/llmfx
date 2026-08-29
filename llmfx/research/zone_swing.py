@@ -151,6 +151,7 @@ def collect_swing_trades(
     reversal_signal: str = "both",
     max_flips: int = 1,
     max_adds: int = 0,
+    add_after_break: bool = False,
     add_size: float = 1.0,
     max_open: int = 4,
     rearm_atr: float = 1.0,
@@ -576,6 +577,15 @@ def collect_swing_trades(
                 if sg is not None and crossed_now(sg.price, False):
                     picks.append((sg.price, "structure", sg))
                 picks = [z for z in picks if (z[1], z[2].index) != pos.add_swing]
+                if add_after_break and picks:
+                    # **帯を抜けた後だけ買い増す。**利用者の指摘: 帯へ
+                    # 向かう途中の切り上げでも足してしまうので、単純な
+                    # ダマシや大口の防衛が成功したときに損切りが増える。
+                    # 買い増しは「抜ける」に賭ける動きなのだから、
+                    # 抜ける前にわざわざ負ける理由を増やす必要はない。
+                    beyond = ((lambda v: v > pos.zone_price) if pos.long_side
+                              else (lambda v: v < pos.zone_price))
+                    picks = [z for z in picks if beyond(z[0])]
                 if picks:
                     line, source, go = (min(picks, key=lambda z: z[0])
                                         if pos.long_side
