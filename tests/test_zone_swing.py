@@ -647,3 +647,49 @@ def test_the_wave_can_be_measured_from_either_turn():
         return statistics.mean(z)
 
     assert width("prev") > width("last"), (width("last"), width("prev"))
+
+
+def test_add_never_records_a_stop_worse_than_an_earlier_leg() -> None:
+    """後から入った脚の損切りが、前の脚より **不利な位置** にあってはならない。
+
+    建玉の損切りは有利方向へしか動かない(買いなら上へ)。買い増しは
+    その時点の `pos.stop` を位置ごと共有するので、脚を約定順に並べた
+    とき損切りは買いで単調非減少、売りで単調非増加になるはず。
+
+    以前はここで `min_stop_atr` の下限を **分母にだけ** 掛けていた。
+    決済は必ず `pos.stop` で起きるのに、R をより遠い線で割るので
+    負けが浅く見える。下限に届かない位置では見送るのが正しい。
+    """
+    # `min_stop_atr` を広めに取ると下限が効く場面が増える。旧コードは
+    # この設定で 23 件中 3 件、後の脚に前より不利な損切りを記録した。
+    msa = 4.0
+    _, ts = legs(max_adds=3, max_flips=0, min_stop_atr=msa,
+                 stop_basis="band", stop_buffer_atr=1.5)
+    adds = [t for t in ts if t.kind == "add"]
+    assert adds, "買い増しが 1 件も出ていない"
+
+    by_pos: dict[int, list] = {}
+    for t in ts:
+        by_pos.setdefault(t.position_id, []).append(t)
+    checked = 0
+    for group in by_pos.values():
+        group.sort(key=lambda t: (t.entry_index, t.kind != "zone"))
+        for before, after in zip(group, group[1:]):
+            if after.kind != "add":
+                continue          # ドテンは別の建玉なので対象外
+            if after.long_side:
+                assert after.stop_at_entry >= before.stop_at_entry - 1e-9, (
+                    f"買い増しの損切りが前の脚より下: "
+                    f"{after.stop_at_entry} < {before.stop_at_entry}")
+            else:
+                assert after.stop_at_entry <= before.stop_at_entry + 1e-9, (
+                    f"売り増しの損切りが前の脚より上: "
+                    f"{after.stop_at_entry} > {before.stop_at_entry}")
+            checked += 1
+    assert checked > 0, "検査対象の買い増しが無い"
+
+    # 下限に届かない位置の買い増しは、そもそも存在してはいけない。
+    for t in adds:
+        assert abs(t.entry - t.stop_at_entry) >= msa * t.atr - 1e-9, (
+            f"下限に届かない買い増しが建っている: "
+            f"{abs(t.entry - t.stop_at_entry) / t.atr:.3f} ATR")

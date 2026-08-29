@@ -584,13 +584,19 @@ def collect_swing_trades(
                         at, px = i, line
                         if entry_fill == "next_open" and i + 1 < len(candles):
                             at, px = i + 1, candles[i + 1].open
-                        # 買い増しは建玉の損切りを共有する。**下限だけ掛ける。**
+                        # 買い増しは建玉の損切りを **位置ごと** 共有する。
+                        #
+                        # 以前はここで `min_stop_atr` の下限を掛けていたが、
+                        # **決済は必ず `pos.stop` で起きる**(close_position
+                        # に渡しているのは pos.stop)ため、下限が効いた
+                        # 買い増しは「実際には使わない損切り」で R を割って
+                        # いた。分母だけが遠くなるので負けが浅く見える。
+                        #
+                        # 正しくは、下限に届かない位置では **買い増しを
+                        # 見送る**。分母をいじって建てるのではなく建てない。
                         astop = pos.stop
-                        if min_stop_atr:
-                            sg2 = -1.0 if pos.long_side else 1.0
-                            floor = px + sg2 * min_stop_atr * a
-                            astop = (min(astop, floor) if pos.long_side
-                                     else max(astop, floor))
+                        if min_stop_atr and abs(px - astop) < min_stop_atr * a:
+                            continue
                         risk = abs(px - astop)
                         if risk > 0 and ((px > astop) if pos.long_side
                                          else (px < astop)):
