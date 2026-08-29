@@ -211,8 +211,17 @@ figcaption{font-size:14px; color:var(--ink2); line-height:1.75;
     <span class="lb">ここが要点</span>
     <strong>ブレイクに向かう値を拾わない。</strong>帯に置いた指値だと、
     抜ける瞬間に必ず約定して、そのまま損切りへ運ばれます。
-    少し下に置けば、抜けるときは<strong>そもそも約定しない</strong>。
-    無駄な損切りが構造的に発生しません。
+    <strong>すでに通過した値</strong>に置けば、抜けるときは
+    <strong>そもそも約定しない</strong>。無駄な損切りが構造的に発生しません。
+  </div>
+  <div class="note bad">
+    <span class="lb">訂正 — 取り消しはもっと後</span>
+    上の図は「抜けた瞬間に取り消す」と描いていますが、<strong>これは誤りです。</strong>
+    注文はすでに通過した値にあるので、抜けている間は<strong>そもそも約定しません。</strong>
+    残しておいても損をしない。そして<strong>ダマシで戻ってきたら、そこで拾えます。</strong><br><br>
+    正しい取り消しの条件は、利用者の説明どおり
+    <strong>「抜けた後に高値切り上げ・安値切り上げが起き、抵抗帯が既に機能しなく
+    なったと思われる状態」</strong>。構造が確定して帯が死んでから取り消します。
   </div>
 </section>
 
@@ -229,27 +238,35 @@ figcaption{font-size:14px; color:var(--ink2); line-height:1.75;
   <div class="sechead"><span class="eyebrow">確認したいこと</span>
     <h2>数字を決めないと実装できない 5 点</h2></div>
   <div class="panel pad"><div class="steps">
-    <div class="step"><span class="n">1</span><span class="b">
-      <span class="h">「触れるギリギリ」はどこか</span>
-      <span class="d">注文を置き始める距離。帯から 0.3 ATR 以内に入ったら、など。
-      いまの実装は「帯に触れてから」なので、<strong>1 本ぶん遅い</strong>可能性があります</span></span></div>
-    <div class="step"><span class="n">2</span><span class="b">
-      <span class="h">「少し下」はどれだけ下か</span>
-      <span class="d">ATR に対する比(0.1 ATR など)か、固定 pips か。
-      浅すぎるとヒゲで発動し、深すぎると跳ね返りを取り逃します</span></span></div>
+    <div class="step"><span class="n">1・2</span><span class="b">
+      <span class="h">どこに置くか</span>
+      <span class="d"><strong class="add">決まり:「自分が注文を置く値を、価格がすでに通過していること」</strong>。
+      これが定義です。帯へ向かう途中の、すでに通り過ぎた水準へ置く。
+      <strong>具体的な距離は掃引で決める</strong></span></span></div>
     <div class="step"><span class="n">3</span><span class="b">
       <span class="h">「抜けた」の判定</span>
-      <span class="d">帯を終値で越えたらか、少しでも越えたらか。
-      取り消しの早さが、拾う数と質の両方を決めます</span></span></div>
+      <span class="d"><strong class="add">決まり: 抜けた後に高値切り上げ・安値切り上げが起き、
+      帯が機能しなくなったと判断できた時点</strong>。抜けた瞬間ではない。
+      注文はすでに通過した値にあるので、抜けている間は約定しない。
+      <strong>残しておけばダマシの戻りを拾える</strong></span></span></div>
     <div class="step"><span class="n">4</span><span class="b">
       <span class="h">跳ね返り側の損切り</span>
-      <span class="d">帯の外 1.5 ATR のままでよいか。約定位置が帯に近くなるので、
-      <strong>リスク幅は今よりかなり狭くなります</strong></span></span></div>
+      <span class="d">要検証。約定位置が帯に近くなるので、
+      <strong>リスク幅は今よりかなり狭くなります</strong>。
+      同じ値幅がより大きな R になり、コスト比率も下がる</span></span></div>
     <div class="step"><span class="n">5</span><span class="b">
-      <span class="h">両方が同じ帯で起きたら</span>
-      <span class="d">跳ね返りで入って損切りになった後、同じ帯が抜けたら
-      ブレイク側で入り直すか。それとも 1 帯 1 回か</span></span></div>
+      <span class="h">同じ帯で両方起きたら</span>
+      <span class="d">要検証。利用者は裁量では一旦様子を見るが、
+      <strong>機械なら入ってもよいかもしれない</strong>とのこと。両方測る</span></span></div>
   </div></div>
+  <div class="note">
+    <span class="lb">掃引の作法</span>
+    要検証が 3 つあります。<strong>軸を増やすほど、偶然プラスになるセルが出ます。</strong>
+    このプロジェクトはその形で 11 回崩れました。掃引は
+    <strong>コストを抜いた全銘柄合算(段 1)</strong>で行い、
+    <strong>表が台地になっているか</strong>(隣のセルでも成立するか)を必ず見ます。
+    1 点だけ跳ねていたら採りません。
+  </div>
 </section>
 
 </div></div>
