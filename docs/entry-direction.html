@@ -127,101 +127,95 @@ a{color:var(--sell)}
   .chartbox svg .anim{animation:fade .5s ease both}
   @keyframes fade{from{opacity:0}to{opacity:1}}
 }
-.fig{display:block; max-width:100%; height:auto}
-.figwrap{overflow-x:auto; padding:clamp(14px,3vw,24px)}
-figure{margin:0}
-figcaption{font-size:14px; color:var(--ink2); line-height:1.75;
-  padding:12px clamp(16px,3vw,26px) 18px}
-.tag{font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:700;
-  letter-spacing:.14em; text-transform:uppercase; padding:14px clamp(14px,3vw,24px) 0}
-.tag.a{color:var(--sell)} .tag.b{color:var(--buy)} .tag.c{color:var(--be)}
+.quote{
+  border-left:3px solid var(--sell); padding:2px 0 2px 20px; margin:0;
+  font-family:"Zen Old Mincho",serif; font-size:clamp(16px,2.2vw,18.5px);
+  line-height:1.9; color:var(--ink);
+}
+.quote .who{
+  display:block; font-family:"IBM Plex Mono",monospace; font-size:11px;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--muted);
+  margin-bottom:8px; font-weight:600;
+}
+.quote ol{margin:0; padding-left:1.4em}
+.quote li{margin:.35em 0}
+.add{color:var(--be); font-weight:700}
+.two{display:grid; gap:20px; grid-template-columns:1fr 1fr}
+@media (max-width:860px){.two{grid-template-columns:1fr}}
 </style>
 <div class="wrap">
 <header class="top stack g16">
   <span class="eyebrow">llmfx / 抵抗帯トレード / 認識合わせ</span>
   <h1>帯に来た時点では方向を決めない</h1>
-  <p class="lede prose">いまの実装は、帯へ触れる<strong>前に</strong>売るか買うかを決めています。
-  仕様は「帯が何を示したかに従う」。<strong>この 1 行の差を図で確認します。</strong></p>
+  <p class="lede prose">跳ね返りとブレイクで、<strong>入り方の機構が別</strong>です。
+  こちらは両側を「執行足の折り返しを抜けたら入る」で揃えていました。
+  その差を図で確認します。</p>
 </header>
 
 <div class="stack g64">
 
 <section class="stack g24">
   <div class="sechead"><span class="eyebrow">仕様</span>
-    <h2>あなたの手順(CLAUDE.md より)</h2></div>
+    <h2>あなたの手順</h2></div>
   <blockquote class="quote">
-    <span class="who">利用者</span>
-    <ol>
-      <li>抵抗帯を見つける — 何度も試され、そのたびに押し戻されている水準</li>
-      <li>帯で待つ — 抜けた瞬間に飛び乗らない</li>
-      <li>帯が何を示したかに従う — 弾かれたら跳ね返りに乗り、抜けたら
-          抜けた側に乗る。<strong>帯に来た時点では方向を決めない</strong></li>
-      <li>伸ばす — 固定の利確を置くとこの裾を切り落とす</li>
-    </ol>
-  </blockquote>
-  <div class="note bad">
-    <span class="lb">実装との差</span>
-    3 が入っていません。<code>reverse_entry</code> という設定で、
-    <strong>帯へ触れる前に向きが固定</strong>されています。
-    <code>False</code> なら必ず跳ね返りに賭け、抜けたら見送る。
-    <code>True</code> なら必ずブレイクに賭け、跳ね返ったら見送る。
-  </div>
-</section>
-
-<section class="stack g24">
-  <div class="sechead"><span class="eyebrow">場面 1</span>
-    <h2>弾かれた場合 — 執行足が下へ折り返す</h2></div>
-  <div class="panel"><div class="caphead"><span class="t">帯が跳ね返した</span><span class="m">帯 100.00 / ATR 0.10 / 執行 M15</span></div><div class="chartbox" id="c-reject" role="img" aria-label="抵抗帯に触れた後、執行足の安値1を下抜けて売りに入る図"></div><div class="legend" id="l-reject"><section class="stack g24">
-  <div class="sechead"><span class="eyebrow">訂正 / 利用者の説明 2026-08-29</span>
-    <h2>跳ね返りとブレイクで、入り方の機構が違う</h2></div>
-  <blockquote class="quote">
-    <span class="who">利用者</span>
+    <span class="who">利用者 — 2026-08-29</span>
     まず抵抗帯に向かう現在値を貼り続ける。抵抗帯に触れるギリギリになったら、
     跳ね返り用の指値を<strong>その少し下</strong>に置く。つまり、そのまま抜けたら
-    この指値は約定にならず、<strong>無意味に損切りをする必要がなくなる</strong>。
-    抜けたら一旦指値をキャンセルする。<br><br>
+    この指値は約定にならず、<strong>無意味に損切りをする必要がなくなる</strong>。<br><br>
+    大事なのは<strong>自分が指値を置く値を、価格が既に通過している事</strong>。<br><br>
     抵抗帯をブレイクして抜けた後、高値切り上げ・安値切り上げが見えたら、
     <strong>次の</strong>高値切り上げ・安値切り上げの 2 つ下の時間足の
     ダウ転換時にエントリー。損切りラインもいつもの。<br><br>
     ポイントは、<strong>ブレイクに向かう値を指値で上手く拾わないようにすること</strong>。
   </blockquote>
+</section>
+
+<section class="stack g24">
+  <div class="sechead"><span class="eyebrow">いまの実装</span>
+    <h2>帯へ触れる前に、向きが固定されている</h2></div>
+  <p class="prose"><code>reverse_entry</code> という設定で、帯に触れる前に売買の向きが
+  決まります。<code>False</code> なら必ず跳ね返りに賭け、抜けたら見送る。
+  <code>True</code> なら必ずブレイクに賭け、跳ね返ったら見送る。
+  <strong>同じ設定で両方は取れません。</strong></p>
+  <div class="two">
+    <div class="panel"><div class="caphead"><span class="t">跳ね返りに賭ける設定</span><span class="m">reverse_entry=False</span></div><div class="chartbox" id="c-reject" role="img" aria-label="抵抗帯に触れた後、執行足の安値1を下抜けて売りに入る図"></div><div class="legend" id="l-reject"></div></div>
+    <div class="panel"><div class="caphead"><span class="t">ブレイクに賭ける設定</span><span class="m">reverse_entry=True</span></div><div class="chartbox" id="c-breakout" role="img" aria-label="抵抗帯に触れた後、執行足の高値1を上抜けて買いに入る図"></div><div class="legend" id="l-breakout"></div></div>
+  </div>
   <div class="note bad">
-    <span class="lb">こちらの実装との差</span>
-    上の 3 図(先に来たほうを取る)は、<strong>両側とも「執行足の直近の折り返しを抜けたら入る」</strong>
-    で揃えていました。実際の手法は<strong>跳ね返りとブレイクで機構が別</strong>です。
-    とくに跳ね返り側の水準が違います — 執行足の折り返しは帯から離れた場所に出るので、
+    <span class="lb">水準そのものが違う</span>
+    どちらも<strong>執行足の直近の折り返し</strong>を待っています。
+    執行足の折り返しは<strong>帯から離れた場所に出る</strong>ので、
     入る位置が悪く、損切りまでの幅も広くなります。
+    実際の手法はこれとは別の場所に注文を置きます。
   </div>
 </section>
 
 <section class="stack g24">
   <div class="sechead"><span class="eyebrow">跳ね返り側 1</span>
-    <h2>帯の少し下に置く。折り返せば発動する</h2></div>
-  <div class="panel"><div class="caphead"><span class="t">跳ね返った場合</span><span class="m">帯 100.00 / 注文 99.88 / ATR 0.10</span></div><div class="chartbox" id="c-v2b" role="img" aria-label="帯へ届く直前に帯の少し下へ注文を置き、折り返して発動する図"></div><div class="legend" id="l-v2b"></div></div>
-  <p class="prose">帯へ届く直前に、<strong>帯の少し下</strong>へ売り注文を置きます。
-  値段が下に来ないと発動しないので、<span class="mark">折り返したときだけ入る</span>。
+    <h2>すでに通過した値に置く。折り返せば発動する</h2></div>
+  <div class="panel"><div class="caphead"><span class="t">跳ね返った場合</span><span class="m">帯 100.00 / 注文 99.88 / ATR 0.10</span></div><div class="chartbox" id="c-v2b" role="img" aria-label="帯へ届く直前に、価格がすでに通過した水準へ注文を置き、折り返して発動する図"></div><div class="legend" id="l-v2b"></div></div>
+  <p class="prose">帯へ届く直前に、<strong>価格がすでに通過した水準</strong>へ売り注文を置きます。
+  値段が戻ってこないと発動しないので、<span class="mark">折り返したときだけ入る</span>。
   損切りは帯の外。</p>
 </section>
 
 <section class="stack g24">
   <div class="sechead"><span class="eyebrow">跳ね返り側 2</span>
-    <h2>抜けたら発動しない。取り消す</h2></div>
-  <div class="panel"><div class="caphead"><span class="t">抜けた場合</span><span class="m">同じ注文 99.88 / 発動せず</span></div><div class="chartbox" id="c-v2k" role="img" aria-label="同じ注文が、価格がそのまま上抜けたため発動せずに取り消される図"></div><div class="legend" id="l-v2k"></div></div>
+    <h2>抜けても発動しない。取り消すのは帯が死んでから</h2></div>
+  <div class="panel"><div class="caphead"><span class="t">抜けた場合</span><span class="m">同じ注文 99.88 / 発動せず</span></div><div class="chartbox" id="c-v2k" role="img" aria-label="同じ注文が、価格がそのまま上抜けたため発動しない図"></div><div class="legend" id="l-v2k"></div></div>
   <div class="note">
     <span class="lb">ここが要点</span>
     <strong>ブレイクに向かう値を拾わない。</strong>帯に置いた指値だと、
     抜ける瞬間に必ず約定して、そのまま損切りへ運ばれます。
-    <strong>すでに通過した値</strong>に置けば、抜けるときは
-    <strong>そもそも約定しない</strong>。無駄な損切りが構造的に発生しません。
+    すでに通過した値に置けば、抜けるときは<strong>そもそも約定しない</strong>。
+    無駄な損切りが構造的に発生しません。
   </div>
-  <div class="note bad">
-    <span class="lb">訂正 — 取り消しはもっと後</span>
-    上の図は「抜けた瞬間に取り消す」と描いていますが、<strong>これは誤りです。</strong>
-    注文はすでに通過した値にあるので、抜けている間は<strong>そもそも約定しません。</strong>
-    残しておいても損をしない。そして<strong>ダマシで戻ってきたら、そこで拾えます。</strong><br><br>
-    正しい取り消しの条件は、利用者の説明どおり
-    <strong>「抜けた後に高値切り上げ・安値切り上げが起き、抵抗帯が既に機能しなく
-    なったと思われる状態」</strong>。構造が確定して帯が死んでから取り消します。
+  <div class="note">
+    <span class="lb">取り消しは急がない</span>
+    注文はすでに通過した値にあるので、抜けている間は約定しません。
+    <strong>残しておいても損をせず、ダマシで戻ってきたら拾えます。</strong>
+    取り消すのは<strong>抜けた後に高値切り上げ・安値切り上げが起き、
+    帯が機能しなくなったと判断できた時点</strong>。抜けた瞬間ではありません。
   </div>
 </section>
 
@@ -235,126 +229,43 @@ figcaption{font-size:14px; color:var(--ink2); line-height:1.75;
 </section>
 
 <section class="stack g24">
-  <div class="sechead"><span class="eyebrow">確認したいこと</span>
-    <h2>数字を決めないと実装できない 5 点</h2></div>
+  <div class="sechead"><span class="eyebrow">まとめ</span>
+    <h2>決まったことと、掃引で決めること</h2></div>
   <div class="panel pad"><div class="steps">
-    <div class="step"><span class="n">1・2</span><span class="b">
-      <span class="h">どこに置くか</span>
-      <span class="d"><strong class="add">決まり:「自分が注文を置く値を、価格がすでに通過していること」</strong>。
-      これが定義です。帯へ向かう途中の、すでに通り過ぎた水準へ置く。
-      <strong>具体的な距離は掃引で決める</strong></span></span></div>
-    <div class="step"><span class="n">3</span><span class="b">
-      <span class="h">「抜けた」の判定</span>
-      <span class="d"><strong class="add">決まり: 抜けた後に高値切り上げ・安値切り上げが起き、
-      帯が機能しなくなったと判断できた時点</strong>。抜けた瞬間ではない。
-      注文はすでに通過した値にあるので、抜けている間は約定しない。
-      <strong>残しておけばダマシの戻りを拾える</strong></span></span></div>
-    <div class="step"><span class="n">4</span><span class="b">
+    <div class="step"><span class="n">決</span><span class="b">
+      <span class="h">注文を置く位置</span>
+      <span class="d"><strong class="add">自分が注文を置く値を、価格がすでに通過していること。</strong>
+      これが定義です。「帯から 0.2 ATR」のような恣意的な数字ではなく、
+      <strong>価格の軌跡そのものが位置を決めます</strong></span></span></div>
+    <div class="step"><span class="n">決</span><span class="b">
+      <span class="h">取り消しの条件</span>
+      <span class="d"><strong class="add">抜けた後に構造が確定し、帯が機能しなくなった時点。</strong>
+      閾値ではなく、既にあるダウ構造の判定を使います</span></span></div>
+    <div class="step"><span class="n">検</span><span class="b">
+      <span class="h">どれだけ手前に置くか</span>
+      <span class="d">通過済みという条件は満たしたうえで、直近の折り返しか、
+      ATR に対する比か。浅いとヒゲで発動し、深いと取り逃します</span></span></div>
+    <div class="step"><span class="n">検</span><span class="b">
       <span class="h">跳ね返り側の損切り</span>
-      <span class="d">要検証。約定位置が帯に近くなるので、
-      <strong>リスク幅は今よりかなり狭くなります</strong>。
-      同じ値幅がより大きな R になり、コスト比率も下がる</span></span></div>
-    <div class="step"><span class="n">5</span><span class="b">
-      <span class="h">同じ帯で両方起きたら</span>
-      <span class="d">要検証。利用者は裁量では一旦様子を見るが、
-      <strong>機械なら入ってもよいかもしれない</strong>とのこと。両方測る</span></span></div>
+      <span class="d">約定位置が帯に近くなるので、<strong>リスク幅は今よりかなり狭くなります</strong>。
+      同じ値幅がより大きな R になり、コスト比率も下がります</span></span></div>
+    <div class="step"><span class="n">検</span><span class="b">
+      <span class="h">同じ帯での入り直し</span>
+      <span class="d">跳ね返りで損切りになった後、その帯が抜けたらブレイク側で入り直すか。
+      裁量では見送るが、<strong>機械なら入ってもよいかもしれない</strong>とのこと。両方測ります</span></span></div>
   </div></div>
-  <div class="note">
+  <div class="note bad">
     <span class="lb">掃引の作法</span>
     要検証が 3 つあります。<strong>軸を増やすほど、偶然プラスになるセルが出ます。</strong>
     このプロジェクトはその形で 11 回崩れました。掃引は
-    <strong>コストを抜いた全銘柄合算(段 1)</strong>で行い、
+    <strong>コストを抜いた全銘柄合算</strong>で行い、
     <strong>表が台地になっているか</strong>(隣のセルでも成立するか)を必ず見ます。
     1 点だけ跳ねていたら採りません。
   </div>
 </section>
 
-</div></div>
-  <p class="prose">帯へ触れた後、執行の足が <strong>安値1 を下抜けた</strong>ところで売り。
-  損切りは帯の外。<span class="mark">この動きは今の実装でも取れます</span>
-  (<code>reverse_entry=False</code> のとき)。</p>
-</section>
-
-<section class="stack g24">
-  <div class="sechead"><span class="eyebrow">場面 2</span>
-    <h2>抜けた場合 — 執行足が上へ折り返す</h2></div>
-  <div class="panel"><div class="caphead"><span class="t">帯を抜けた</span><span class="m">帯 100.00 / ATR 0.10 / 執行 M15</span></div><div class="chartbox" id="c-breakout" role="img" aria-label="抵抗帯に触れた後、執行足の高値1を上抜けて買いに入る図"></div><div class="legend" id="l-breakout"></div></div>
-  <p class="prose">同じ帯へ触れた後、今度は執行の足が <strong>高値1 を上抜けた</strong>ところで買い。
-  <span class="mark">この動きも今の実装で取れます</span>
-  (<code>reverse_entry=True</code> のとき)。</p>
-  <div class="note bad">
-    <span class="lb">取れないもの</span>
-    <strong>同じ設定で両方を取ることができません。</strong>
-    今の実装はどちらか一方に固定されるので、場面 1 用に設定すると場面 2 が見送られ、
-    場面 2 用に設定すると場面 1 が見送られます。
-  </div>
-</section>
-
-<section class="stack g24">
-  <div class="sechead"><span class="eyebrow">提案する規則</span>
-    <h2>先に来たほうを取る</h2></div>
-  <div class="panel">
-    <div class="caphead"><span class="t">帯へ触れてから、両側を同時に見張る</span>
-      <span class="m">どちらか先に抜けたほうで入る</span></div>
-    <figure>
-    <div class="figwrap">
-    <svg class="fig" viewBox="0 0 760 320" width="760" height="320" role="img"
-      aria-label="帯に触れた後、上側の執行高値と下側の執行安値を同時に見張り、先に抜けたほうの方向で入る規則の図">
-      <line x1="60" y1="150" x2="700" y2="150" stroke="var(--zone)" stroke-width="3"/>
-      <text x="60" y="141" fill="var(--zone)" font-size="12" font-weight="600"
-            font-family="IBM Plex Mono, monospace">抵抗帯 100.00</text>
-      <circle cx="200" cy="150" r="6" fill="var(--zone)"/>
-      <text x="200" y="180" fill="var(--ink2)" font-size="12" text-anchor="middle"
-            font-family="IBM Plex Mono, monospace">帯へ触れる</text>
-      <text x="200" y="197" fill="var(--muted)" font-size="11.5" text-anchor="middle"
-            font-family="IBM Plex Mono, monospace">ここでは方向を決めない</text>
-
-      <line x1="230" y1="95" x2="700" y2="95" stroke="var(--buy)" stroke-width="2"
-            stroke-dasharray="6 5"/>
-      <text x="236" y="86" fill="var(--buy)" font-size="12" font-weight="600"
-            font-family="IBM Plex Mono, monospace">執行 高値1 — 上抜けたら 買い</text>
-      <line x1="230" y1="215" x2="700" y2="215" stroke="var(--sell)" stroke-width="2"
-            stroke-dasharray="6 5"/>
-      <text x="236" y="232" fill="var(--sell)" font-size="12" font-weight="600"
-            font-family="IBM Plex Mono, monospace">執行 安値1 — 下抜けたら 売り</text>
-
-      <path d="M 200 150 L 230 150" stroke="var(--ink2)" stroke-width="2"/>
-      <path d="M 230 150 L 300 95" stroke="var(--buy)" stroke-width="2.5"/>
-      <polygon points="300,95 288,96 295,106" fill="var(--buy)"/>
-      <path d="M 230 150 L 300 215" stroke="var(--sell)" stroke-width="2.5"/>
-      <polygon points="300,215 295,204 288,214" fill="var(--sell)"/>
-
-      <line x1="470" y1="60" x2="470" y2="250" stroke="var(--line)" stroke-width="1.5"
-            stroke-dasharray="4 4"/>
-      <text x="480" y="66" fill="var(--muted)" font-size="11.5"
-            font-family="IBM Plex Mono, monospace">24 本(執行足)で打ち切り</text>
-
-      <text x="60" y="40" fill="var(--be)" font-size="13" font-weight="700"
-            font-family="IBM Plex Mono, monospace">先に抜けたほうで入る。もう一方はその時点で取り消す</text>
-      <text x="60" y="290" fill="var(--muted)" font-size="12"
-            font-family="IBM Plex Mono, monospace">損切りはどちらの向きでも帯の外 1.5 ATR。約定値から 2.0 ATR は必ず空ける</text>
-      <text x="60" y="308" fill="var(--muted)" font-size="12"
-            font-family="IBM Plex Mono, monospace">同じ足で両方に触れたら、帯から遠いほう(= 後から届くほう)を採らない</text>
-    </svg>
-    </div>
-    <figcaption>帯へ触れた時点では注文を出さず、上下 2 本の水準を同時に見張ります。
-    先に抜けたほうの向きで入り、もう一方は取り消します。</figcaption>
-    </figure>
-  </div>
-  <div class="note">
-    <span class="lb">確認したいこと</span>
-    <ol style="margin:6px 0 0; padding-left:1.3em">
-      <li>見張る水準は<strong>執行足の直近の高値と安値</strong>でよいか
-          (いまのドテン・買い増しと同じ基準)</li>
-      <li>同じ足で両方に触れたとき、どちらを採るか。
-          <strong>帯に近いほうが先に届いた</strong>と考える案でよいか</li>
-      <li>24 本(執行足)で打ち切るのは今のまま</li>
-      <li>損切りはどちらの向きでも帯の外。<strong>向きで変えない</strong></li>
-    </ol>
-  </div>
-</section>
-
-</div></div>
+</div>
+</div>
 <script>
 const NS="http://www.w3.org/2000/svg";
 const el=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e;};
@@ -454,39 +365,44 @@ function draw(box, lg, cands, levels, marks, opt){
     }
   }
 }
-
+</script>
+<script>
 const F = {"reject": {"candles": [{"o": 99.55, "h": 99.618, "l": 99.52, "c": 99.604, "t": ""}, {"o": 99.604, "h": 99.7, "l": 99.58, "c": 99.658, "t": ""}, {"o": 99.658, "h": 99.737, "l": 99.632, "c": 99.712, "t": ""}, {"o": 99.712, "h": 99.774, "l": 99.703, "c": 99.766, "t": ""}, {"o": 99.766, "h": 99.855, "l": 99.728, "c": 99.82, "t": ""}, {"o": 99.82, "h": 99.849, "l": 99.783, "c": 99.8, "t": ""}, {"o": 99.8, "h": 99.807, "l": 99.765, "c": 99.78, "t": ""}, {"o": 99.78, "h": 99.795, "l": 99.752, "c": 99.76, "t": ""}, {"o": 99.76, "h": 99.79, "l": 99.708, "c": 99.74, "t": ""}, {"o": 99.74, "h": 99.829, "l": 99.718, "c": 99.81, "t": ""}, {"o": 99.81, "h": 99.896, "l": 99.792, "c": 99.88, "t": ""}, {"o": 99.88, "h": 99.979, "l": 99.863, "c": 99.95, "t": ""}, {"o": 99.95, "h": 100.044, "l": 99.899, "c": 100.02, "t": ""}, {"o": 100.02, "h": 100.043, "l": 99.972, "c": 99.985, "t": ""}, {"o": 99.985, "h": 99.997, "l": 99.937, "c": 99.95, "t": ""}, {"o": 99.95, "h": 99.964, "l": 99.899, "c": 99.915, "t": ""}, {"o": 99.915, "h": 99.95, "l": 99.843, "c": 99.88, "t": ""}, {"o": 99.88, "h": 99.923, "l": 99.871, "c": 99.907, "t": ""}, {"o": 99.907, "h": 99.94, "l": 99.891, "c": 99.933, "t": ""}, {"o": 99.933, "h": 99.991, "l": 99.916, "c": 99.96, "t": ""}, {"o": 99.96, "h": 99.996, "l": 99.864, "c": 99.903, "t": ""}, {"o": 99.903, "h": 99.911, "l": 99.838, "c": 99.847, "t": ""}, {"o": 99.847, "h": 99.871, "l": 99.764, "c": 99.79, "t": ""}, {"o": 99.79, "h": 99.833, "l": 99.709, "c": 99.733, "t": ""}, {"o": 99.733, "h": 99.748, "l": 99.645, "c": 99.677, "t": ""}, {"o": 99.677, "h": 99.691, "l": 99.612, "c": 99.62, "t": ""}, {"o": 99.62, "h": 99.647, "l": 99.554, "c": 99.583, "t": ""}, {"o": 99.583, "h": 99.601, "l": 99.526, "c": 99.547, "t": ""}, {"o": 99.547, "h": 99.566, "l": 99.49, "c": 99.51, "t": ""}, {"o": 99.51, "h": 99.524, "l": 99.465, "c": 99.473, "t": ""}, {"o": 99.473, "h": 99.49, "l": 99.402, "c": 99.437, "t": ""}, {"o": 99.437, "h": 99.469, "l": 99.381, "c": 99.4, "t": ""}, {"o": 99.4, "h": 99.414, "l": 99.385, "c": 99.4, "t": ""}], "band": 100.0, "atr": 0.1, "swings": [[13, 100.02, "執行 高値1", "high"], [17, 99.88, "執行 安値1", "low"], [20, 99.96, "執行 高値2", "high"]], "touch_at": 13, "sell_line": 99.88, "sell_at": 22, "buy_line": 100.02, "stop": 100.17}, "breakout": {"candles": [{"o": 99.55, "h": 99.618, "l": 99.52, "c": 99.604, "t": ""}, {"o": 99.604, "h": 99.7, "l": 99.58, "c": 99.658, "t": ""}, {"o": 99.658, "h": 99.737, "l": 99.632, "c": 99.712, "t": ""}, {"o": 99.712, "h": 99.774, "l": 99.703, "c": 99.766, "t": ""}, {"o": 99.766, "h": 99.855, "l": 99.728, "c": 99.82, "t": ""}, {"o": 99.82, "h": 99.849, "l": 99.783, "c": 99.8, "t": ""}, {"o": 99.8, "h": 99.807, "l": 99.765, "c": 99.78, "t": ""}, {"o": 99.78, "h": 99.795, "l": 99.752, "c": 99.76, "t": ""}, {"o": 99.76, "h": 99.79, "l": 99.708, "c": 99.74, "t": ""}, {"o": 99.74, "h": 99.829, "l": 99.718, "c": 99.81, "t": ""}, {"o": 99.81, "h": 99.896, "l": 99.792, "c": 99.88, "t": ""}, {"o": 99.88, "h": 99.979, "l": 99.863, "c": 99.95, "t": ""}, {"o": 99.95, "h": 100.044, "l": 99.899, "c": 100.02, "t": ""}, {"o": 100.02, "h": 100.042, "l": 99.978, "c": 99.99, "t": ""}, {"o": 99.99, "h": 100.002, "l": 99.947, "c": 99.96, "t": ""}, {"o": 99.96, "h": 99.974, "l": 99.914, "c": 99.93, "t": ""}, {"o": 99.93, "h": 99.963, "l": 99.864, "c": 99.9, "t": ""}, {"o": 99.9, "h": 99.958, "l": 99.89, "c": 99.94, "t": ""}, {"o": 99.94, "h": 99.988, "l": 99.923, "c": 99.98, "t": ""}, {"o": 99.98, "h": 100.055, "l": 99.96, "c": 100.02, "t": ""}, {"o": 100.02, "h": 100.092, "l": 99.986, "c": 100.06, "t": ""}, {"o": 100.06, "h": 100.128, "l": 100.051, "c": 100.12, "t": ""}, {"o": 100.12, "h": 100.205, "l": 100.093, "c": 100.18, "t": ""}, {"o": 100.18, "h": 100.284, "l": 100.155, "c": 100.24, "t": ""}, {"o": 100.24, "h": 100.315, "l": 100.208, "c": 100.3, "t": ""}, {"o": 100.3, "h": 100.375, "l": 100.292, "c": 100.36, "t": ""}, {"o": 100.36, "h": 100.453, "l": 100.325, "c": 100.42, "t": ""}, {"o": 100.42, "h": 100.488, "l": 100.397, "c": 100.468, "t": ""}, {"o": 100.468, "h": 100.537, "l": 100.446, "c": 100.516, "t": ""}, {"o": 100.516, "h": 100.58, "l": 100.507, "c": 100.564, "t": ""}, {"o": 100.564, "h": 100.63, "l": 100.526, "c": 100.612, "t": ""}, {"o": 100.612, "h": 100.696, "l": 100.592, "c": 100.66, "t": ""}, {"o": 100.66, "h": 100.676, "l": 100.643, "c": 100.66, "t": ""}], "band": 100.0, "atr": 0.1, "swings": [[13, 100.02, "執行 高値1", "high"], [17, 99.9, "執行 安値1", "low"]], "touch_at": 13, "buy_line": 100.02, "buy_at": 20, "sell_line": 99.9, "stop": 99.75}, "v2_bounce": {"candles": [{"o": 99.58, "h": 99.629, "l": 99.554, "c": 99.617, "t": ""}, {"o": 99.617, "h": 99.689, "l": 99.596, "c": 99.653, "t": ""}, {"o": 99.653, "h": 99.711, "l": 99.631, "c": 99.69, "t": ""}, {"o": 99.69, "h": 99.733, "l": 99.683, "c": 99.727, "t": ""}, {"o": 99.727, "h": 99.793, "l": 99.695, "c": 99.763, "t": ""}, {"o": 99.763, "h": 99.834, "l": 99.744, "c": 99.8, "t": ""}, {"o": 99.8, "h": 99.807, "l": 99.766, "c": 99.78, "t": ""}, {"o": 99.78, "h": 99.794, "l": 99.752, "c": 99.76, "t": ""}, {"o": 99.76, "h": 99.79, "l": 99.708, "c": 99.74, "t": ""}, {"o": 99.74, "h": 99.752, "l": 99.706, "c": 99.72, "t": ""}, {"o": 99.72, "h": 99.795, "l": 99.704, "c": 99.78, "t": ""}, {"o": 99.78, "h": 99.866, "l": 99.765, "c": 99.84, "t": ""}, {"o": 99.84, "h": 99.921, "l": 99.794, "c": 99.9, "t": ""}, {"o": 99.9, "h": 99.987, "l": 99.885, "c": 99.96, "t": ""}, {"o": 99.96, "h": 100.035, "l": 99.944, "c": 100.02, "t": ""}, {"o": 100.02, "h": 100.036, "l": 99.946, "c": 99.965, "t": ""}, {"o": 99.965, "h": 100.005, "l": 99.867, "c": 99.91, "t": ""}, {"o": 99.91, "h": 99.93, "l": 99.844, "c": 99.855, "t": ""}, {"o": 99.855, "h": 99.864, "l": 99.781, "c": 99.8, "t": ""}, {"o": 99.8, "h": 99.849, "l": 99.784, "c": 99.82, "t": ""}, {"o": 99.82, "h": 99.866, "l": 99.792, "c": 99.84, "t": ""}, {"o": 99.84, "h": 99.866, "l": 99.834, "c": 99.86, "t": ""}, {"o": 99.86, "h": 99.898, "l": 99.841, "c": 99.88, "t": ""}, {"o": 99.88, "h": 99.931, "l": 99.862, "c": 99.9, "t": ""}, {"o": 99.9, "h": 99.915, "l": 99.802, "c": 99.834, "t": ""}, {"o": 99.834, "h": 99.849, "l": 99.76, "c": 99.769, "t": ""}, {"o": 99.769, "h": 99.801, "l": 99.668, "c": 99.703, "t": ""}, {"o": 99.703, "h": 99.725, "l": 99.612, "c": 99.637, "t": ""}, {"o": 99.637, "h": 99.66, "l": 99.547, "c": 99.571, "t": ""}, {"o": 99.571, "h": 99.589, "l": 99.496, "c": 99.506, "t": ""}, {"o": 99.506, "h": 99.526, "l": 99.398, "c": 99.44, "t": ""}, {"o": 99.44, "h": 99.474, "l": 99.377, "c": 99.396, "t": ""}, {"o": 99.396, "h": 99.411, "l": 99.336, "c": 99.352, "t": ""}, {"o": 99.352, "h": 99.362, "l": 99.297, "c": 99.308, "t": ""}, {"o": 99.308, "h": 99.345, "l": 99.224, "c": 99.264, "t": ""}, {"o": 99.264, "h": 99.292, "l": 99.204, "c": 99.22, "t": ""}, {"o": 99.22, "h": 99.226, "l": 99.206, "c": 99.22, "t": ""}], "band": 100.0, "atr": 0.1, "arm_at": 13, "order": 99.88, "fill_at": 18, "stop": 100.15}, "v2_break": {"candles": [{"o": 99.58, "h": 99.629, "l": 99.554, "c": 99.617, "t": ""}, {"o": 99.617, "h": 99.689, "l": 99.596, "c": 99.653, "t": ""}, {"o": 99.653, "h": 99.711, "l": 99.631, "c": 99.69, "t": ""}, {"o": 99.69, "h": 99.733, "l": 99.683, "c": 99.727, "t": ""}, {"o": 99.727, "h": 99.793, "l": 99.695, "c": 99.763, "t": ""}, {"o": 99.763, "h": 99.834, "l": 99.744, "c": 99.8, "t": ""}, {"o": 99.8, "h": 99.807, "l": 99.766, "c": 99.78, "t": ""}, {"o": 99.78, "h": 99.794, "l": 99.752, "c": 99.76, "t": ""}, {"o": 99.76, "h": 99.79, "l": 99.708, "c": 99.74, "t": ""}, {"o": 99.74, "h": 99.752, "l": 99.706, "c": 99.72, "t": ""}, {"o": 99.72, "h": 99.795, "l": 99.704, "c": 99.78, "t": ""}, {"o": 99.78, "h": 99.866, "l": 99.765, "c": 99.84, "t": ""}, {"o": 99.84, "h": 99.921, "l": 99.794, "c": 99.9, "t": ""}, {"o": 99.9, "h": 99.987, "l": 99.885, "c": 99.96, "t": ""}, {"o": 99.96, "h": 100.035, "l": 99.944, "c": 100.02, "t": ""}, {"o": 100.02, "h": 100.079, "l": 100.003, "c": 100.064, "t": ""}, {"o": 100.064, "h": 100.145, "l": 100.025, "c": 100.108, "t": ""}, {"o": 100.108, "h": 100.17, "l": 100.098, "c": 100.152, "t": ""}, {"o": 100.152, "h": 100.204, "l": 100.135, "c": 100.196, "t": ""}, {"o": 100.196, "h": 100.275, "l": 100.176, "c": 100.24, "t": ""}, {"o": 100.24, "h": 100.265, "l": 100.2, "c": 100.227, "t": ""}, {"o": 100.227, "h": 100.232, "l": 100.207, "c": 100.213, "t": ""}, {"o": 100.213, "h": 100.23, "l": 100.182, "c": 100.2, "t": ""}, {"o": 100.2, "h": 100.229, "l": 100.17, "c": 100.187, "t": ""}, {"o": 100.187, "h": 100.197, "l": 100.152, "c": 100.173, "t": ""}, {"o": 100.173, "h": 100.183, "l": 100.154, "c": 100.16, "t": ""}, {"o": 100.16, "h": 100.252, "l": 100.126, "c": 100.22, "t": ""}, {"o": 100.22, "h": 100.301, "l": 100.196, "c": 100.28, "t": ""}, {"o": 100.28, "h": 100.362, "l": 100.256, "c": 100.34, "t": ""}, {"o": 100.34, "h": 100.417, "l": 100.33, "c": 100.4, "t": ""}, {"o": 100.4, "h": 100.479, "l": 100.359, "c": 100.46, "t": ""}, {"o": 100.46, "h": 100.558, "l": 100.438, "c": 100.52, "t": ""}, {"o": 100.52, "h": 100.537, "l": 100.502, "c": 100.52, "t": ""}], "band": 100.0, "atr": 0.1, "arm_at": 13, "order": 99.88, "cancel_at": 20}, "v2_pullback": {"candles": [{"o": 99.86, "h": 99.934, "l": 99.829, "c": 99.92, "t": ""}, {"o": 99.92, "h": 100.023, "l": 99.896, "c": 99.98, "t": ""}, {"o": 99.98, "h": 100.065, "l": 99.953, "c": 100.04, "t": ""}, {"o": 100.04, "h": 100.108, "l": 100.031, "c": 100.1, "t": ""}, {"o": 100.1, "h": 100.196, "l": 100.062, "c": 100.16, "t": ""}, {"o": 100.16, "h": 100.192, "l": 100.112, "c": 100.13, "t": ""}, {"o": 100.13, "h": 100.137, "l": 100.084, "c": 100.1, "t": ""}, {"o": 100.1, "h": 100.116, "l": 100.061, "c": 100.07, "t": ""}, {"o": 100.07, "h": 100.102, "l": 100.005, "c": 100.04, "t": ""}, {"o": 100.04, "h": 100.126, "l": 100.019, "c": 100.108, "t": ""}, {"o": 100.108, "h": 100.192, "l": 100.091, "c": 100.176, "t": ""}, {"o": 100.176, "h": 100.272, "l": 100.16, "c": 100.244, "t": ""}, {"o": 100.244, "h": 100.335, "l": 100.196, "c": 100.312, "t": ""}, {"o": 100.312, "h": 100.408, "l": 100.296, "c": 100.38, "t": ""}, {"o": 100.38, "h": 100.392, "l": 100.335, "c": 100.348, "t": ""}, {"o": 100.348, "h": 100.362, "l": 100.3, "c": 100.316, "t": ""}, {"o": 100.316, "h": 100.349, "l": 100.248, "c": 100.284, "t": ""}, {"o": 100.284, "h": 100.3, "l": 100.243, "c": 100.252, "t": ""}, {"o": 100.252, "h": 100.259, "l": 100.204, "c": 100.22, "t": ""}, {"o": 100.22, "h": 100.34, "l": 100.195, "c": 100.296, "t": ""}, {"o": 100.296, "h": 100.412, "l": 100.253, "c": 100.372, "t": ""}, {"o": 100.372, "h": 100.457, "l": 100.362, "c": 100.448, "t": ""}, {"o": 100.448, "h": 100.551, "l": 100.419, "c": 100.524, "t": ""}, {"o": 100.524, "h": 100.647, "l": 100.497, "c": 100.6, "t": ""}, {"o": 100.6, "h": 100.612, "l": 100.543, "c": 100.568, "t": ""}, {"o": 100.568, "h": 100.58, "l": 100.529, "c": 100.536, "t": ""}, {"o": 100.536, "h": 100.562, "l": 100.477, "c": 100.504, "t": ""}, {"o": 100.504, "h": 100.521, "l": 100.453, "c": 100.472, "t": ""}, {"o": 100.472, "h": 100.49, "l": 100.421, "c": 100.44, "t": ""}, {"o": 100.44, "h": 100.539, "l": 100.429, "c": 100.52, "t": ""}, {"o": 100.52, "h": 100.622, "l": 100.474, "c": 100.6, "t": ""}, {"o": 100.6, "h": 100.723, "l": 100.575, "c": 100.68, "t": ""}, {"o": 100.68, "h": 100.779, "l": 100.66, "c": 100.76, "t": ""}, {"o": 100.76, "h": 100.853, "l": 100.745, "c": 100.84, "t": ""}, {"o": 100.84, "h": 100.968, "l": 100.789, "c": 100.92, "t": ""}, {"o": 100.92, "h": 101.036, "l": 100.9, "c": 101.0, "t": ""}, {"o": 101.0, "h": 101.008, "l": 100.983, "c": 101.0, "t": ""}], "band": 100.0, "atr": 0.1, "swings": [[5, 100.16, "高値1", "high"], [9, 100.04, "安値1", "low"], [14, 100.38, "高値2", "high"], [19, 100.22, "安値2", "low"], [24, 100.6, "高値3", "high"], [29, 100.44, "安値3", "low"]], "confirmed_at": 19, "entry": 100.52, "entry_at": 31, "stop": 100.22}};
+
+// --- いまの実装。両側とも執行足の折り返しを待つ ------------------------
 (function(){
   const f=F.reject;
   draw(document.getElementById("c-reject"), document.getElementById("l-reject"),
     f.candles,
-    [{y:f.band,c:"--zone",w:3,t:"抵抗帯 "+f.band.toFixed(2),k:"抵抗帯"},
-     {y:f.buy_line,c:"--buy",w:2,dash:"5 5",t:"高値1 上抜け → 買い(来ず)",k:"上抜けたら買い"},
+    [{y:f.band,c:"--zone",w:3,t:"帯 "+f.band.toFixed(2),k:"抵抗帯"},
      {y:f.sell_line,c:"--sell",w:2.5,t:"安値1 下抜け → 売り",k:"下抜けたら売り"},
-     {y:f.stop,c:"--stop",w:2.5,dash:"3 4",t:"損切り "+f.stop.toFixed(2),k:"損切り(帯の外)"}],
+     {y:f.stop,c:"--stop",w:2,dash:"3 4",t:"損切り",k:"損切り(帯の外)"}],
     [{i:f.touch_at,y:f.band,c:"--zone",kind:"ghost",t:"帯へ触れる"},
      {i:f.sell_at,y:f.sell_line,c:"--sell",kind:"entry",t:"売り",down:true}],
-    {h:340,swings:f.swings,alt:"帯が跳ね返した場合"});
+    {h:320,swings:f.swings,alt:"跳ね返りに賭ける設定"});
 })();
 (function(){
   const f=F.breakout;
   draw(document.getElementById("c-breakout"), document.getElementById("l-breakout"),
     f.candles,
-    [{y:f.band,c:"--zone",w:3,t:"抵抗帯 "+f.band.toFixed(2),k:"抵抗帯"},
+    [{y:f.band,c:"--zone",w:3,t:"帯 "+f.band.toFixed(2),k:"抵抗帯"},
      {y:f.buy_line,c:"--buy",w:2.5,t:"高値1 上抜け → 買い",k:"上抜けたら買い"},
-     {y:f.sell_line,c:"--sell",w:2,dash:"5 5",t:"安値1 下抜け → 売り(来ず)",k:"下抜けたら売り"},
-     {y:f.stop,c:"--stop",w:2.5,dash:"3 4",t:"損切り "+f.stop.toFixed(2),k:"損切り(帯の外)"}],
+     {y:f.stop,c:"--stop",w:2,dash:"3 4",t:"損切り",k:"損切り(帯の外)"}],
     [{i:f.touch_at,y:f.band,c:"--zone",kind:"ghost",t:"帯へ触れる"},
      {i:f.buy_at,y:f.buy_line,c:"--buy",kind:"entry",t:"買い"}],
-    {h:340,swings:f.swings,alt:"帯を抜けた場合"});
+    {h:320,swings:f.swings,alt:"ブレイクに賭ける設定"});
 })();
+
+// --- 実際の手法。跳ね返り側は「すでに通過した値」に置く ----------------
 (function(){
   const f=F.v2_bounce;
   draw(document.getElementById("c-v2b"), document.getElementById("l-v2b"),
     f.candles,
     [{y:f.band,c:"--zone",w:3,t:"抵抗帯 "+f.band.toFixed(2),k:"抵抗帯"},
-     {y:f.order,c:"--sell",w:2.5,from:f.arm_at,t:"注文 "+f.order.toFixed(2),k:"帯の少し下に置く注文"},
-     {y:f.stop,c:"--stop",w:2.5,dash:"3 4",t:"損切り "+f.stop.toFixed(2),k:"損切り(帯の外)"}],
+     {y:f.order,c:"--sell",w:2.5,from:f.arm_at,t:"注文 "+f.order.toFixed(2),
+       k:"すでに通過した値に置く注文"},
+     {y:f.stop,c:"--stop",w:2.5,dash:"3 4",t:"損切り "+f.stop.toFixed(2),
+       k:"損切り(帯の外)"}],
     [{i:f.arm_at,y:f.order,c:"--muted",kind:"ghost",t:"ここで置く"},
      {i:f.fill_at,y:f.order,c:"--sell",kind:"entry",t:"売り",down:true}],
     {h:340,alt:"折り返して発動する"});
@@ -496,11 +412,11 @@ const F = {"reject": {"candles": [{"o": 99.55, "h": 99.618, "l": 99.52, "c": 99.
   draw(document.getElementById("c-v2k"), document.getElementById("l-v2k"),
     f.candles,
     [{y:f.band,c:"--zone",w:3,t:"抵抗帯 "+f.band.toFixed(2),k:"抵抗帯"},
-     {y:f.order,c:"--sell",w:2,dash:"5 5",from:f.arm_at,to:f.cancel_at,
-      t:"注文 "+f.order.toFixed(2)+"(発動せず)",k:"発動しなかった注文"}],
+     {y:f.order,c:"--sell",w:2,dash:"5 5",from:f.arm_at,
+       t:"注文 "+f.order.toFixed(2)+"(発動せず)",k:"発動しなかった注文"}],
     [{i:f.arm_at,y:f.order,c:"--muted",kind:"ghost",t:"ここで置く"},
-     {i:f.cancel_at,y:f.band,c:"--be",kind:"ghost",t:"抜けた → 取り消す"}],
-    {h:340,alt:"抜けたので発動せず取り消す"});
+     {i:f.cancel_at,y:f.band,c:"--be",kind:"ghost",t:"抜けた(まだ取り消さない)"}],
+    {h:340,alt:"抜けても発動しない"});
 })();
 (function(){
   const f=F.v2_pullback;
@@ -509,7 +425,7 @@ const F = {"reject": {"candles": [{"o": 99.55, "h": 99.618, "l": 99.52, "c": 99.
     [{y:f.band,c:"--zone",w:2.5,t:"抜けた帯 "+f.band.toFixed(2),k:"抜けた帯"},
      {y:f.stop,c:"--stop",w:2.5,t:"損切り = 1 つ前の安値",k:"損切り(1 つ前の安値)"}],
     [{i:f.confirmed_at,y:f.candles[f.confirmed_at].l,c:"--muted",kind:"ghost",
-      t:"切り上げを確認"},
+       t:"切り上げを確認"},
      {i:f.entry_at,y:f.entry,c:"--buy",kind:"entry",t:"買い"}],
     {h:360,swings:f.swings,alt:"ブレイク後の押し目で買う"});
 })();
