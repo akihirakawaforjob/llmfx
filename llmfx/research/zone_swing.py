@@ -132,6 +132,8 @@ def collect_swing_trades(
     higher_minutes: int | None = None,
     entry_signal: str = "exec",
     zone_entry: str = "extreme",
+    break_steps: int = 2,
+
     zone_wait_bars: int = 24,
     zone_entry_max_atr: float = 2.0,
     entry_fill: str = "level",
@@ -217,7 +219,7 @@ def collect_swing_trades(
         raise ValueError(f"stop_basis が不正: {stop_basis!r}")
     if wave_ref not in ("last", "prev"):
         raise ValueError(f"wave_ref が不正: {wave_ref!r}")
-    if zone_entry not in ("extreme", "exec_turn"):
+    if zone_entry not in ("extreme", "exec_turn", "method"):
         raise ValueError(f"zone_entry が不正: {zone_entry!r}")
     if entry_signal not in ("exec", "structure"):
         raise ValueError(f"entry_signal が不正: {entry_signal!r}")
@@ -262,6 +264,15 @@ def collect_swing_trades(
     positions: list[_Position] = []
     armed: dict[str, bool] = {"top": True, "bottom": True}
     touched: dict[str, int | None] = {"top": None, "bottom": None}
+    # --- `zone_entry="method"` 用。**帯ごとの状態を持つ。** -----------------
+    # 利用者の手順:
+    #   跳ね返り用の注文は「すでに通過した値」に置く。抜けても発動しない
+    #   ので残しておき、**帯が機能しなくなったと判断できた時点**で取り消す。
+    #   ブレイク側は抜けた後、高値切り上げ・安値切り上げを確認してから
+    #   **次の**切り上げの押し目で、執行足のダウ転換で入る。
+    dead: dict[str, bool] = {"top": False, "bottom": False}
+    steps: dict[str, int] = {"top": 0, "bottom": 0}
+    step_ix: dict[str, int] = {"top": -1, "bottom": -1}
     pid_seq = 0
     zone_hi: tuple[int, float] | None = None
     zone_lo: tuple[int, float] | None = None
@@ -396,6 +407,33 @@ def collect_swing_trades(
                 zone_key=pos.zone_key, line_at_entry=leg.line_at_entry,
                 flips=pos.flips, adds=pos.adds))
         pos.legs = []
+
+    def open_zone_position(key: str, level: float, side: bool, px: float,
+                           at: int, stop: float, a: float) -> bool:
+        """帯で建玉を 1 つ作る。作れたら True。
+
+        **約定ロジックを二重に書かない**(規則 3)。`exec_turn` と
+        `method` の両方がここを通る。約定した足で既に損切りへ届いて
+        いたら、その建玉は無かったことにする。
+        """
+        nonlocal pid_seq
+        risk = abs(stop - px)
+        if risk <= 0:
+            return False
+        armed[key] = False
+        touched[key] = None
+        pid_seq += 1
+        base = st["last_low"] if side else st["last_high"]
+        positions.append(_Position(
+            pid=pid_seq, long_side=side, stop=stop, atr=a,
+            zone_price=level, zone_key=key,
+            anchor=base.index if base is not None else -1,
+            legs=[_Leg("zone", at, px, stop, risk, 1.0,
+                       base.price if base is not None else 0.0, a)]))
+        if stopped_on_fill_bar(positions[-1], at, px, side):
+            positions.pop()
+            return False
+        return True
 
     for i, candle in enumerate(candles):
         # --- 閉じた足だけを取り込む。**足ごとに独立に進める。** ----------
@@ -650,6 +688,88 @@ def collect_swing_trades(
             if not armed[key] or len(positions) >= max_open:
                 continue
 
+            if zone_entry == "method":
+                # 帯へ届いたら、跳ね返り用の注文を置く。**すでに通過した
+                # 値**(執行足の直近の折り返し)なので、そのまま抜けても
+                # 発動しない。だから 24 本で切らず、帯が死ぬまで残す。
+                if ((candle.high >= level) if key == "top"
+                        else (candle.low <= level)):
+                    touched[key] = i
+                if touched[key] is None:
+                    continue
+
+                # --- 帯の向こう側で構造が育ったか ------------------------
+                # 上の帯なら 高値切り上げ かつ 安値切り上げ、かつ その安値が
+                # 帯の向こう側。確定したスイングだけを見るので先読みしない。
+                lh, ph = st["last_high"], st["prev_high"]
+                ll, pl = st["last_low"], st["prev_low"]
+                grew = False
+                if None not in (lh, ph, ll, pl):
+                    if key == "top":
+                        grew = (lh.price > ph.price and ll.price > pl.price
+                                and ll.price > level)
+                    else:
+                        grew = (lh.price < ph.price and ll.price < pl.price
+                                and lh.price < level)
+                if grew:
+                    edge = ll if key == "top" else lh
+                    if edge.index > step_ix[key]:
+                        step_ix[key] = edge.index
+                        steps[key] += 1
+                        # **1 回目の切り上げで帯は死んだと見なす。**
+                        # ここから跳ね返り側の注文は取り消す。
+                        dead[key] = True
+
+                # --- 跳ね返り側。帯が死ぬまで生きている ------------------
+                if not dead[key]:
+                    xg = ex["last_high"] if long_side else ex["last_low"]
+                    if xg is not None and not (
+                            zone_entry_max_atr
+                            and abs(xg.price - level) > zone_entry_max_atr * a):
+                        limit = xg.price
+                        probe = limit - (spread if long_side else 0.0)
+                        prior = candles[i - 1].close if i else candle.open
+                        if ((prior < probe and candle.high >= probe) if long_side
+                                else (prior > probe and candle.low <= probe)):
+                            at, px = i, limit
+                            if entry_fill == "next_open" and i + 1 < len(candles):
+                                at, px = i + 1, candles[i + 1].open
+                            wref = ex[("last_low" if wave_ref == "last"
+                                       else "prev_low") if key == "top"
+                                      else ("last_high" if wave_ref == "last"
+                                            else "prev_high")]
+                            stop = place_stop(px, long_side, a, band=level,
+                                              wave_from=wref.price if wref
+                                              else None)
+                            if stop is not None:
+                                if open_zone_position(key, level, long_side, px,
+                                                      at, stop, a):
+                                    continue
+                # --- ブレイク側。**次の**切り上げの押し目で入る -----------
+                if steps[key] >= break_steps:
+                    bl = not long_side          # 抜けた側へ乗る
+                    xg = ex["last_high"] if bl else ex["last_low"]
+                    if xg is None:
+                        continue
+                    limit = xg.price
+                    probe = limit - (spread if bl else 0.0)
+                    prior = candles[i - 1].close if i else candle.open
+                    if not ((prior < probe and candle.high >= probe) if bl
+                            else (prior > probe and candle.low <= probe)):
+                        continue
+                    at, px = i, limit
+                    if entry_fill == "next_open" and i + 1 < len(candles):
+                        at, px = i + 1, candles[i + 1].open
+                    # 損切りは **いつもの** = 1 つ前の折り返し
+                    base = st["prev_low"] if bl else st["prev_high"]
+                    stop = place_stop(
+                        px, bl, a, band=level,
+                        structural=(base.price if base is not None else None))
+                    if stop is None:
+                        continue
+                    open_zone_position(key, level, bl, px, at, stop, a)
+                continue
+
             if zone_entry == "exec_turn":
                 # **帯の最値に置いた指値は、抜けたときだけ約定する。**
                 # 跳ね返りを取りたいのに、届かずに見送るか、抜けてから
@@ -689,19 +809,7 @@ def collect_swing_trades(
                                   wave_from=wref.price if wref else None)
                 if stop is None:
                     continue
-                risk = abs(stop - px)
-                armed[key] = False
-                touched[key] = None
-                pid_seq += 1
-                base = st["last_low"] if long_side else st["last_high"]
-                positions.append(_Position(
-                    pid=pid_seq, long_side=long_side, stop=stop, atr=a,
-                    zone_price=level, zone_key=key,
-                    anchor=base.index if base is not None else -1,
-                    legs=[_Leg("zone", at, px, stop, risk, 1.0,
-                               base.price if base is not None else 0.0, a)]))
-                if stopped_on_fill_bar(positions[-1], at, px, long_side):
-                    positions.pop()
+                open_zone_position(key, level, long_side, px, at, stop, a)
                 continue
 
             probe = limit - (spread if long_side else 0.0)

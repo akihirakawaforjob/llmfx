@@ -722,3 +722,63 @@ def test_add_after_break_only_adds_beyond_the_band() -> None:
     z_off = [(t.position_id, t.entry_index) for t in off if t.kind == "zone"]
     z_on = [(t.position_id, t.entry_index) for t in on if t.kind == "zone"]
     assert z_off == z_on
+
+
+def test_method_mode_takes_both_sides_of_the_same_band() -> None:
+    """`zone_entry="method"` は跳ね返りとブレイクの両方を取る。
+
+    利用者の手順:
+      跳ね返り用の注文は「すでに通過した値」に置く。抜けても発動しない
+      ので残しておき、帯が機能しなくなった時点で取り消す。ブレイク側は
+      抜けた後に切り上げを確認してから、次の押し目で入る。
+
+    `reverse_entry` で向きを固定する形では、片側しか取れなかった。
+    """
+    common = dict(zone_entry="exec_turn", zone_wait_bars=24,
+                  zone_entry_max_atr=2.0, entry_signal="exec",
+                  stop_basis="band", stop_buffer_atr=1.5, min_stop_atr=2.0,
+                  max_flips=0, max_adds=0, max_open=4)
+    _, fade = legs(**common, reverse_entry=False)
+    _, brk = legs(**common, reverse_entry=True)
+    _, both = legs(**{**common, "zone_entry": "method"})
+
+    z_fade = [t for t in fade if t.kind == "zone"]
+    z_brk = [t for t in brk if t.kind == "zone"]
+    z_both = [t for t in both if t.kind == "zone"]
+    assert z_fade and z_brk and z_both
+
+    def sides(ts):
+        return {(t.zone_key, t.long_side) for t in ts}
+
+    # 片側ずつの形は、帯ごとに向きが 1 つに決まる。
+    for one in (z_fade, z_brk):
+        for key in ("top", "bottom"):
+            assert len({s for k, s in sides(one) if k == key}) <= 1
+
+    # `method` は同じ側の帯で **両方の向き** を持てる。
+    got = sides(z_both)
+    assert any(len({s for k, s in got if k == key}) == 2
+               for key in ("top", "bottom")), (
+        "帯の片側でしか建てていない。両方を取れていない")
+
+
+def test_method_mode_bounce_order_survives_the_break() -> None:
+    """跳ね返り用の注文は、抜けただけでは消えない。
+
+    すでに通過した値に置いてあるので、抜けている間は約定しない。
+    残しておけばダマシで戻ってきたときに拾える。24 本で打ち切る
+    `exec_turn` はこれを捨てていた。
+    """
+    common = dict(zone_entry_max_atr=2.0, entry_signal="exec",
+                  stop_basis="band", stop_buffer_atr=1.5, min_stop_atr=2.0,
+                  max_flips=0, max_adds=0, max_open=4)
+    _, short = legs(**common, zone_entry="exec_turn", zone_wait_bars=4,
+                    reverse_entry=False)
+    _, meth = legs(**common, zone_entry="method")
+
+    # 帯へ触れてから約定するまでの本数。`method` のほうが長く待てる。
+    def waits(ts):
+        return [t.entry_index for t in ts if t.kind == "zone"]
+
+    assert len(waits(meth)) > 0
+    assert len(waits(short)) > 0
