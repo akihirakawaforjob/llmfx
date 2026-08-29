@@ -115,15 +115,17 @@ def autocorr(g, pooled, need=40):
             xs.append(stat(g[prev])); ys.append(stat(g[k]))
     if len(xs) < 8:
         return None, len(xs)
-    return float(np.corrcoef(xs, ys)[0, 1]), len(xs)
+    r = float(np.corrcoef(xs, ys)[0, 1])
+    t = r * np.sqrt((len(xs) - 2) / max(1e-12, 1 - r * r))
+    return (r, float(t)), len(xs)
 
 
 ev = load_events()
 print(f"\n{'=' * 86}")
 print("## 推定は安定しているか(折半法)と、1 つ前の窓は当たるか")
 print("=" * 86)
-print(f"{'束ね方':<12}{'窓':<10}{'窓の数':>8}{'折半の信頼性':>14}"
-      f"{'そのままの相関':>15}{'雑音を補正した相関':>19}")
+print(f"{'束ね方':<12}{'窓':<10}{'組の数':>8}{'折半の信頼性':>14}"
+      f"{'1つ前との相関':>14}{'t':>8}{'雑音を補正':>19}")
 for pooled, pname in ((False, "銘柄ごと"), (True, "10 銘柄を束ねる")):
     for q, qn in ((1, "四半期"), (2, "半年"), (4, "1 年"), (8, "2 年")):
         g = buckets(ev, q, pooled)
@@ -131,9 +133,10 @@ for pooled, pname in ((False, "銘柄ごと"), (True, "10 銘柄を束ねる")):
         ac, nac = autocorr(g, pooled)
         if rel is None or ac is None:
             print(f"{pname:<12}{qn:<10}{len(g):>8}   件数不足"); continue
-        adj = ac / rel if rel > 0.05 else float("nan")
-        print(f"{pname:<12}{qn:<10}{len(g):>8}{rel:>+14.3f}"
-              f"{ac:>+15.3f}{adj:>+19.3f}")
+        r, t = ac
+        adj = r / rel if rel > 0.05 else float("nan")
+        print(f"{pname:<12}{qn:<10}{nac:>8}{rel:>+14.3f}"
+              f"{r:>+12.3f}{t:>+8.2f}{adj:>+19.3f}")
 
 print(f"\n{'=' * 86}")
 print("## 相場全体の状態(10 銘柄を束ねた年ごとの追随)")
@@ -141,6 +144,6 @@ print("=" * 86)
 g = buckets(ev, 4, True)
 for k in sorted(g):
     v = np.array(g[k])
-    print(f"  {k // 4}  {len(v):>5,} 事象  追随 {v.mean():>+6.3f}  "
-          f"{'#' * max(0, int((v.mean() + 0.3) * 40))}")
+    print(f"  {k}年  {len(v):>5,} 事象  追随 {v.mean():>+6.3f}  "
+          f"{'#' * max(0, int((v.mean() + 0.45) * 30))}")
 print("\ndone", flush=True)
