@@ -17,6 +17,8 @@
 """
 from __future__ import annotations
 
+import json
+import os
 from collections import defaultdict
 
 import numpy as np
@@ -61,14 +63,26 @@ def era_of(year: str) -> str | None:
     return None
 
 
+# **1 銘柄ごとに書き出す。**このコンテナは 10 分前後で巻き戻ることが
+# あり、その都度、走らせていた処理ごと消える(実際に 12 回消えた)。
+# 途中結果をリポジトリへ落として、再実行で続きから拾えるようにする。
+OUT = "docs/handoff/regime-decay.json"
+
 print("なぜ 2000-2007 にしかエッジが無いのか — 手法 / 相場 / 値幅")
 print("開発用 2000-2019 のみ。**検証用データには触らない。**\n")
 
-strat = defaultdict(lambda: defaultdict(list))   # [銘柄][期] -> [(R, R無コスト, コスト/R)]
-market = defaultdict(lambda: defaultdict(list))  # [銘柄][期] -> [追随 ATR]
+strat = defaultdict(lambda: defaultdict(list))   # [銘柄][(期, 種)] -> [(R, リスク pips)]
+market = defaultdict(lambda: defaultdict(list))  # [銘柄][期] -> [追随 ATR 倍]
 vol = defaultdict(lambda: defaultdict(list))     # [銘柄][期] -> [ATR pips]
 
+done_pairs: dict = {}
+if os.path.exists(OUT):
+    done_pairs = json.load(open(OUT, encoding="utf-8"))
+    print(f"  済み: {', '.join(done_pairs)}", flush=True)
+
 for p in PAIRS:
+    if p in done_pairs:
+        continue
     cfg = AppConfig.load(f"configs/h1/{p}.yaml")
     cs = split_candles(load_candles_csv(f"data/{p}_m15.csv"),
                        cfg.backtest.holdout_start, "dev")
@@ -99,7 +113,26 @@ for p in PAIRS:
             continue
         s = 1.0 if up else -1.0
         market[p][era].append((cl[i + FWD] - cl[i]) * s / a[i])
-    print(f"  {p} 済み", flush=True)
+    done_pairs[p] = {
+        "strat": {f"{e}|{t}": [[float(r), float(k)] for r, k in v]
+                  for (e, t), v in strat[p].items()},
+        "market": {e: [float(x) for x in v] for e, v in market[p].items()},
+        "vol": {e: float(np.median(v)) for e, v in vol[p].items() if v},
+        "spread_pips": float(cfg.execution.spread_pips),
+    }
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    json.dump(done_pairs, open(OUT, "w", encoding="utf-8"))
+    print(f"  {p} 済み → {OUT} へ保存", flush=True)
+
+# 保存済みを読み戻す(再実行で続きから拾った分を含む)
+for p, d in done_pairs.items():
+    for k, v in d["strat"].items():
+        e, t = k.split("|")
+        strat[p][(e, t)] = [(r, kk) for r, kk in v]
+    for e, v in d["market"].items():
+        market[p][e] = v
+    for e, v in d["vol"].items():
+        vol[p][e] = [v]
 
 print(f"\n{'=' * 96}")
 print("## 銘柄ごと(混ぜない)")
@@ -115,8 +148,7 @@ for p in PAIRS:
             continue
         vc = np.array([r for r, _ in c]); vf = np.array([r for r, _ in f])
         risk = np.median([k for _, k in c])
-        cost_r = (cfg_sp := AppConfig.load(f"configs/h1/{p}.yaml")
-                  .execution.spread_pips) and (cfg_sp * 2 / risk)
+        cost_r = done_pairs[p]["spread_pips"] * 2 / risk
         t = float(vc.mean() / (vc.std(ddof=1) / np.sqrt(len(vc))))
         m = np.array(market[p][era])
         go, back = m[m > 0], m[m < 0]
