@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from collections import Counter
 
 from llmfx.backtest.split import split_candles
@@ -49,13 +50,35 @@ def bucket(mfe: float) -> str:
     return "大きく順行"
 
 
+def save(counts, picks, done) -> None:
+    out = {"counts": {k: dict(v) for k, v in counts.items()},
+           "picks": picks, "done": sorted(done)}
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False)
+    # **1 銘柄ごとに push する。**このコンテナは 20〜30 分で回収され、
+    # 作業木ごと 8/20 のスナップショットへ戻る(14 回)。
+    for cmd in (["git", "add", "-f", OUT],
+                ["git", "commit", "-q", "-m", "wip: 負けパターンの集計"],
+                ["git", "push", "-q", "origin", "HEAD"]):
+        subprocess.run(cmd, check=False, capture_output=True)
+
+
 def main() -> None:
     counts: dict[str, Counter] = {}
     picks: dict[str, dict] = {}
+    done: set = set()
+    if os.path.exists(OUT):
+        prev = json.load(open(OUT, encoding="utf-8"))
+        counts = {k: Counter(v) for k, v in prev["counts"].items()}
+        picks = prev["picks"]
+        done = set(prev.get("done", []))
+        print(f"  済み: {len(done)} 組", flush=True)
     for name, zm, sm in LADDERS:
-        c: Counter = Counter()
-        best: dict = {}
+        c: Counter = counts.get(name, Counter())
+        best: dict = picks.get(name, {})
         for p in PAIRS:
+            if f"{name}|{p}" in done:
+                continue
             cfg = AppConfig.load(f"configs/h1/{p}.yaml")
             cs = split_candles(load_candles_csv(f"data/{p}_m15.csv"),
                                cfg.backtest.holdout_start, "dev")
@@ -89,13 +112,13 @@ def main() -> None:
                         candles=[dict(o=round(x.open, 5), h=round(x.high, 5),
                                       l=round(x.low, 5), c=round(x.close, 5),
                                       t="") for x in cs[lo:hi + 1]])
-            print(f"  {name} {p} 済み", flush=True)
+            done.add(f"{name}|{p}")
+            counts[name] = c
+            picks[name] = best
+            save(counts, picks, done)
+            print(f"  {name} {p} 済み({len(done)}/20)", flush=True)
         counts[name] = c
         picks[name] = best
-    out = {"counts": {k: dict(v) for k, v in counts.items()},
-           "picks": {k: {kk: vv for kk, vv in v.items()} for k, v in picks.items()}}
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False)
 
     for name, c in counts.items():
         tot = sum(c.values())
