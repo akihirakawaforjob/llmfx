@@ -93,17 +93,46 @@ def run() -> dict:
     return got
 
 
-def boot(rows, draws=10_000):
+def pool(cells, kind=None):
+    """銘柄をまたいで、月ごとに 件数 / 合計 / 二乗和 / 勝ち を足す。"""
+    g = defaultdict(lambda: [0, 0.0, 0.0, 0, 0.0])
+    for cell in cells:
+        for key, v in cell.items():
+            ym, k = key.split("|")
+            if kind is not None and k != kind:
+                continue
+            c = g[ym]
+            for j in range(5):
+                c[j] += v[j]
+    return g
+
+
+def summarize(g):
+    """集計だけから 件数 / 勝率 / 平均勝 / 期待値 / t を出す。"""
+    n = sum(v[0] for v in g.values())
+    tot = sum(v[1] for v in g.values())
+    sq = sum(v[2] for v in g.values())
+    nw = sum(v[3] for v in g.values())
+    sw = sum(v[4] for v in g.values())
+    if n < 2:
+        return None
+    mean = tot / n
+    var = max(0.0, (sq - n * mean * mean) / (n - 1))
+    t = mean / np.sqrt(var / n) if var > 0 else 0.0
+    return n, nw / n, (sw / nw if nw else 0.0), mean, float(t)
+
+
+def boot(g, draws=10_000):
     """月クラスタ。銘柄をまたぐ相関も含めて保守的に見る。"""
-    g = defaultdict(list)
-    for ym, r, _ in rows:
-        g[ym].append(r)
     keys = list(g)
-    sums = np.array([sum(g[k]) for k in keys])
-    ns = np.array([len(g[k]) for k in keys], dtype=float)
+    if not keys:
+        return np.zeros(draws), 0
+    sums = np.array([g[k][1] for k in keys])
+    ns = np.array([g[k][0] for k in keys], dtype=float)
     rng = np.random.default_rng(20260829)
     idx = rng.integers(0, len(keys), size=(draws, len(keys)))
-    return sums[idx].sum(axis=1) / ns[idx].sum(axis=1), len(keys)
+    tot, cnt = sums[idx].sum(axis=1), ns[idx].sum(axis=1)
+    return np.divide(tot, cnt, out=np.zeros_like(tot), where=cnt > 0), len(keys)
 
 
 got = run()
