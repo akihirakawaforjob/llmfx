@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from collections import defaultdict
 
 import numpy as np
@@ -64,15 +65,27 @@ def run() -> dict:
                 tr = collect_swing_trades(
                     cs, **BASE, zone_minutes=zm, structure_minutes=sm,
                     left=3, right=3, min_stop_atr=ms)
-                rows = [[cs[t.entry_index].time.strftime("%Y-%m"),
-                         float(t.r_multiple * t.size),
-                         # 帯の側と向きが揃っていれば跳ね返り、違えばブレイク
-                         "跳ね返り" if (t.zone_key == "bottom") == t.long_side
-                         else "ブレイク"]
-                        for t in tr if t.kind == "zone"]
+                # **生の建玉を持たない。**10 銘柄ぶんで 7 MB を超え、
+                # リポジトリへ置くには重い。月クラスタの取り直しに要る
+                # のは クラスタごとの 件数 と 合計 だけ。t 値のために
+                # 二乗和も持つ。
+                agg: dict = defaultdict(lambda: [0, 0.0, 0.0, 0, 0.0])
+                for t in tr:
+                    if t.kind != "zone":
+                        continue
+                    ym = cs[t.entry_index].time.strftime("%Y-%m")
+                    # 帯の側と向きが揃っていれば跳ね返り、違えばブレイク
+                    kind = ("跳ね返り" if (t.zone_key == "bottom") == t.long_side
+                            else "ブレイク")
+                    r = float(t.r_multiple * t.size)
+                    c = agg[f"{ym}|{kind}"]
+                    c[0] += 1; c[1] += r; c[2] += r * r
+                    if r > 0:
+                        c[3] += 1; c[4] += r
+                rows = dict(agg)
                 cell[f"{name}|{ms}"] = rows
-                print(f"  {p} {name} 損切り下限 {ms} → {len(rows):,} 件",
-                      flush=True)
+                print(f"  {p} {name} 損切り下限 {ms} → "
+                      f"{sum(v[0] for v in rows.values()):,} 件", flush=True)
         got[p] = cell
         os.makedirs(os.path.dirname(OUT), exist_ok=True)
         json.dump(got, open(OUT, "w", encoding="utf-8"))
@@ -101,34 +114,35 @@ print(f"{'足の組':<14}{'損切り下限':>11}{'件数':>9}{'勝率':>7}{'平�
       f"{'期待値R':>9}{'t':>7}{'月クラスタ 95%CI':>26}")
 for name, *_ in LADDERS:
     for ms in STOPS:
-        rows = [r for p in PAIRS for r in got[p][f"{name}|{ms}"]]
-        if len(rows) < 200:
-            print(f"{name:<14}{ms:>11}{len(rows):>9}  件数不足"); continue
-        v = np.array([r for _, r, _ in rows])
-        w = v[v > 0]
-        t = float(v.mean() / (v.std(ddof=1) / np.sqrt(len(v))))
-        bs, nk = boot(rows)
+        g = pool([got[p][f"{name}|{ms}"] for p in PAIRS])
+        r = summarize(g)
+        if r is None or r[0] < 200:
+            print(f"{name:<14}{ms:>11}  件数不足"); continue
+        n, wr, aw, mean, t = r
+        bs, nk = boot(g)
         lo, hi = np.percentile(bs, [2.5, 97.5])
         gate = "0 をまたぐ" if lo <= 0 <= hi else "**0 をまたがない**"
-        print(f"{name:<14}{ms:>11.1f}{len(v):>9,}{(v>0).mean():>7.1%}"
-              f"{w.mean():>+8.2f}{v.mean():>+9.4f}{t:>7.2f}"
+        print(f"{name:<14}{ms:>11.1f}{n:>9,}{wr:>7.1%}"
+              f"{aw:>+8.2f}{mean:>+9.4f}{t:>7.2f}"
               f"   {lo:+.4f} 〜 {hi:+.4f} {gate}")
 print(f"\n{'=' * 86}")
 print("## 機構ごと(跳ね返り / ブレイク)— 混ぜずに出す")
 print("=" * 86)
-print(f"{'足の組':<14}{'損切り下限':>11}{'機構':<10}{'件数':>9}{'勝率':>7}"
-      f"{'平均勝':>8}{'期待値R':>9}{'t':>7}")
+print(f"{'足の組':<14}{'損切り下限':>11}{'機構':<8}{'件数':>9}{'勝率':>7}"
+      f"{'平均勝':>8}{'期待値R':>9}{'t':>7}{'月クラスタ 95%CI':>26}")
 for name, *_ in LADDERS:
     for ms in STOPS:
-        rows = [r for p in PAIRS for r in got[p][f"{name}|{ms}"]]
+        cells = [got[p][f"{name}|{ms}"] for p in PAIRS]
         for kind in ("跳ね返り", "ブレイク"):
-            sel = [r for r in rows if r[2] == kind]
-            if len(sel) < 200:
-                print(f"{name:<14}{ms:>11.1f}{kind:<10}{len(sel):>9}  件数不足")
-                continue
-            v = np.array([r for _, r, _ in sel])
-            w = v[v > 0]
-            t = float(v.mean() / (v.std(ddof=1) / np.sqrt(len(v))))
-            print(f"{name:<14}{ms:>11.1f}{kind:<10}{len(v):>9,}"
-                  f"{(v>0).mean():>7.1%}{w.mean():>+8.2f}{v.mean():>+9.4f}{t:>7.2f}")
+            g = pool(cells, kind)
+            r = summarize(g)
+            if r is None or r[0] < 200:
+                print(f"{name:<14}{ms:>11.1f}{kind:<8}  件数不足"); continue
+            n, wr, aw, mean, t = r
+            bs, _ = boot(g)
+            lo, hi = np.percentile(bs, [2.5, 97.5])
+            gate = "またぐ" if lo <= 0 <= hi else "**またがない**"
+            print(f"{name:<14}{ms:>11.1f}{kind:<8}{n:>9,}"
+                  f"{wr:>7.1%}{aw:>+8.2f}{mean:>+9.4f}{t:>7.2f}"
+                  f"   {lo:+.4f} 〜 {hi:+.4f} {gate}")
 print("\ndone", flush=True)
