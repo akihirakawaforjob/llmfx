@@ -66,6 +66,11 @@ def build() -> str:
 .pick .b{{display:flex; flex-direction:column; gap:4px}}
 .pick .h{{font-weight:700}}
 .pick .d{{font-size:14.5px; color:var(--ink2); line-height:1.75}}
+.fig{{display:block; max-width:100%; height:auto}}
+.figwrap{{overflow-x:auto; padding:clamp(14px,3vw,24px)}}
+figure{{margin:0}}
+figcaption{{font-size:14px; color:var(--ink2); line-height:1.75;
+  padding:12px clamp(16px,3vw,26px) 18px}}
 </style>
 '''
 
@@ -155,35 +160,125 @@ def build() -> str:
 </section>
 
 <section class="stack g24">
-  <div class="sechead"><span class="eyebrow">直し方 2 / 選んでください</span>
-    <h2>「推進波の起点」はどこか</h2></div>
-  {chart("or", "抜けた後の推進波", "3 案の線を重ねてある",
-         "帯を抜けた後の推進波に、起点の候補 3 案を重ねた図")}
+  <div class="sechead"><span class="eyebrow">訂正</span>
+    <h2>「推進波」を読み違えていました</h2></div>
+  <blockquote class="quote">
+    <span class="who">利用者 — 2026-09-14</span>
+    推進波 = <strong>高値1・安値0 のような、調整波じゃない方の波</strong>のことだよ。
+    これを損切りの際に参考にする事で、<strong>推進波を 2 つ取れる見込みがある
+    タイミングであれば、自ずとリスクリワードが 2 対 1 になる</strong>よねという話。
+    まあ、そんなに簡単には上手くいかないんだけども。<br><br>
+    指値を置いた場所に対して、<strong>その直近の推進波を参考にする</strong>事に
+    変わりはない。
+  </blockquote>
+  <div class="note bad">
+    <span class="lb">こちらの誤読</span>
+    「起点はどこか(A / B / C)」という問いの立て方が間違っていました。
+    <strong>どこに指値を置くかの話ではなく、損切り幅の物差しの話</strong>でした。
+    指値の位置は変えず、<strong>そこから直近の推進波 1 本分だけ外へ損切りを置く</strong>。
+  </div>
+</section>
+
+<section class="stack g24">
+  <div class="sechead"><span class="eyebrow">定義</span>
+    <h2>推進波と調整波</h2></div>
+  <div class="panel">
+    <div class="caphead"><span class="t">どの区間が推進波か</span>
+      <span class="m">上昇の構造。安値 → 高値 が推進波</span></div>
+    <figure>
+    <div class="figwrap">
+    <svg class="fig" viewBox="0 0 760 300" width="760" height="300" role="img"
+      aria-label="上昇の構造で、安値から高値へ向かう区間が推進波、高値から安値へ戻る区間が調整波であることを示す図">
+      <polyline points="60,250 150,170 210,200 300,120 360,150 450,70 510,100 600,20"
+        fill="none" stroke="currentColor" stroke-width="1.5" opacity=".35"/>
+      <line x1="60" y1="250" x2="150" y2="170" stroke="var(--buy)" stroke-width="4"
+        stroke-linecap="round"/>
+      <line x1="210" y1="200" x2="300" y2="120" stroke="var(--buy)" stroke-width="4"
+        stroke-linecap="round"/>
+      <line x1="360" y1="150" x2="450" y2="70" stroke="var(--buy)" stroke-width="4"
+        stroke-linecap="round"/>
+      <line x1="510" y1="100" x2="600" y2="20" stroke="var(--buy)" stroke-width="4"
+        stroke-linecap="round"/>
+      <line x1="150" y1="170" x2="210" y2="200" stroke="var(--muted)" stroke-width="3"
+        stroke-dasharray="5 5" stroke-linecap="round"/>
+      <line x1="300" y1="120" x2="360" y2="150" stroke="var(--muted)" stroke-width="3"
+        stroke-dasharray="5 5" stroke-linecap="round"/>
+      <line x1="450" y1="70" x2="510" y2="100" stroke="var(--muted)" stroke-width="3"
+        stroke-dasharray="5 5" stroke-linecap="round"/>
+      <text x="54" y="268" fill="var(--muted)" font-size="12" text-anchor="middle"
+        font-family="IBM Plex Mono, monospace">安値0</text>
+      <text x="150" y="160" fill="var(--muted)" font-size="12" text-anchor="middle"
+        font-family="IBM Plex Mono, monospace">高値1</text>
+      <text x="212" y="220" fill="var(--muted)" font-size="12" text-anchor="middle"
+        font-family="IBM Plex Mono, monospace">安値1</text>
+      <text x="300" y="110" fill="var(--muted)" font-size="12" text-anchor="middle"
+        font-family="IBM Plex Mono, monospace">高値2</text>
+      <text x="362" y="170" fill="var(--muted)" font-size="12" text-anchor="middle"
+        font-family="IBM Plex Mono, monospace">安値2</text>
+      <text x="450" y="60" fill="var(--muted)" font-size="12" text-anchor="middle"
+        font-family="IBM Plex Mono, monospace">高値3</text>
+      <text x="620" y="46" fill="var(--buy)" font-size="13" font-weight="700"
+        font-family="IBM Plex Mono, monospace">推進波</text>
+      <text x="620" y="66" fill="var(--buy)" font-size="11.5"
+        font-family="IBM Plex Mono, monospace">安値 → 高値</text>
+      <text x="620" y="96" fill="var(--muted)" font-size="13" font-weight="700"
+        font-family="IBM Plex Mono, monospace">調整波</text>
+      <text x="620" y="116" fill="var(--muted)" font-size="11.5"
+        font-family="IBM Plex Mono, monospace">高値 → 安値</text>
+      <line x1="530" y1="100" x2="530" y2="20" stroke="var(--be)" stroke-width="2"/>
+      <line x1="523" y1="100" x2="537" y2="100" stroke="var(--be)" stroke-width="2"/>
+      <line x1="523" y1="20" x2="537" y2="20" stroke="var(--be)" stroke-width="2"/>
+      <text x="544" y="64" fill="var(--be)" font-size="12.5" font-weight="700"
+        font-family="IBM Plex Mono, monospace">直近の推進波</text>
+      <text x="544" y="82" fill="var(--be)" font-size="11.5"
+        font-family="IBM Plex Mono, monospace">= 損切り幅の物差し</text>
+    </svg>
+    </div>
+    <figcaption>下降の構造なら向きが反転し、高値 → 安値 が推進波になります。</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="stack g24">
+  <div class="sechead"><span class="eyebrow">直し方 2</span>
+    <h2>損切りは、指値から推進波 1 本分だけ外へ</h2></div>
+  {chart("ws", "売りの例", "指値 100.12 / 直近の推進波 0.34 / 損切り 100.46",
+         "指値の位置から直近の推進波 1 本分だけ外へ損切りを置き、推進波 2 本分で 2 対 1 になることを示す図")}
+  <p class="prose"><strong>推進波を 2 つ取れれば、自動的に 2 対 1 になります。</strong>
+  損切りが 1 本分、目標が 2 本分。図の <span class="mark">1 本分 99.78 / 2 本分 99.44</span> が
+  その位置です。</p>
+  <div class="note">
+    <span class="lb">いまとの差</span>
+    現在は <code>stop_basis="band"</code> で <strong>帯から 1.5 ATR 外</strong>に置いています。
+    帯と指値が離れているほど幅が膨らみ、ブレイク側では中央 7.01 ATR、最大 29.91 ATR に
+    なっていました。<strong>指値を基準に測れば、離れても幅は推進波 1 本分のまま</strong>です。
+  </div>
+</section>
+
+<section class="stack g24">
+  <div class="sechead"><span class="eyebrow">確認</span>
+    <h2>実装前に、あと 3 点</h2></div>
   <div class="panel pad"><div class="steps">
-    <div class="pick"><span class="n">A</span><span class="b">
-      <span class="h">直近の確定した押し安値(構造足)</span>
-      <span class="d">図の <strong>安値2</strong>。いまの実装が損切りに使っている水準です。
-      指値もここに置けば、<strong>損切りは安値2 のすぐ下</strong>になり幅が最も狭い。
-      ただし<strong>浅いので、届く前に走り去ることが多い</strong></span></span></div>
-    <div class="pick"><span class="n">B</span><span class="b">
-      <span class="h">大きく動いた足の付け根</span>
-      <span class="d">図の <strong>付け根</strong>。あなたの言葉に最も近い案です。
-      彼らが守っている水準。損切りはその下。<strong>A より深く、C より浅い</strong>。
-      「大きく動いた足」の定義が要ります(値幅が ATR の何倍か)</span></span></div>
-    <div class="pick"><span class="n">C</span><span class="b">
-      <span class="h">抜けた帯そのもの(リテスト)</span>
-      <span class="d">図の <strong>帯 100.00</strong>。抜けた帯が支持に変わるのを待つ、
-      教科書的な形。<strong>最も深く、最も届きにくい</strong>。
-      届いたときは損切りが帯のすぐ下で済む</span></span></div>
+    <div class="pick"><span class="n">1</span><span class="b">
+      <span class="h">どちら向きの推進波を測るか</span>
+      <span class="d">上昇の構造なら 安値 → 高値、下降なら 高値 → 安値。
+      <strong>構造の向きで決める</strong>案にしています。売りで入るときも、
+      構造が上昇なら上向きの波を物差しにする、ということでよいか</span></span></div>
+    <div class="pick"><span class="n">2</span><span class="b">
+      <span class="h">「直近の」はどこまで遡るか</span>
+      <span class="d"><strong>指値を置いた時点で確定している、最後の推進波</strong>を
+      使う案です。確定にはスイングの右側 N 本ぶんの遅れがあるので、
+      いま進行中の波は使えません</span></span></div>
+    <div class="pick"><span class="n">3</span><span class="b">
+      <span class="h">倍率は 1.0 でよいか</span>
+      <span class="d">「1 本分と同じくらい」なので 1.0 を既定にしますが、
+      <strong>0.8 / 1.0 / 1.2 あたりは掃引して確かめます</strong>。
+      ヒゲで刈られる分の余裕が要るかもしれないので</span></span></div>
   </div></div>
   <div class="note">
-    <span class="lb">聞きたいこと</span>
-    <ol style="margin:6px 0 0; padding-left:1.3em">
-      <li><strong>A・B・C のどれか。</strong>あなたの言葉は B に読めますが、確認させてください</li>
-      <li>B なら、<strong>「大きく動いた足」の定義</strong>。値幅が ATR の何倍以上か</li>
-      <li><strong>指値に届かなかったらどうするか。</strong>見送るか、次の押し目まで待つか</li>
-      <li><strong>損切りは起点のすぐ外でよいか。</strong>推進波 1 本分に収まります</li>
-    </ol>
+    <span class="lb">確定した分</span>
+    <strong>指値に届かなければ見送る。</strong>無理に負け数を増やさない。
+    ブレイク側も同じ扱いにします。
   </div>
 </section>
 
@@ -191,7 +286,7 @@ def build() -> str:
 </div>
 '''
 
-    keep = {k: fig[k] for k in ("near_sell", "near_buy", "origin",
+    keep = {k: fig[k] for k in ("near_sell", "near_buy", "wavestop",
                                 "real_fade", "real_break")}
     script = f'''<script>
 {draw}</script>
@@ -241,13 +336,14 @@ const F = {json.dumps(keep, ensure_ascii=False)};
     {{h:340,alt:"買いは帯より上にしか置かない"}});
 }})();
 (function(){{
-  const f=F.origin;
-  draw(document.getElementById("c-or"), document.getElementById("l-or"), f.candles,
-    [{{y:f.a_swing,c:"--sell",w:2.5,t:"A 直近の押し安値",k:"A 直近の押し安値"}},
-     {{y:f.b_base,c:"--buy",w:2.5,t:"B 大きな足の付け根",k:"B 大きな足の付け根"}},
-     {{y:f.c_band,c:"--zone",w:3,t:"C 抜けた帯(リテスト)",k:"C 抜けた帯"}}],
-    [{{i:f.big_at,y:f.b_base,c:"--buy",kind:"ghost",t:"大きく動いた足"}}],
-    {{h:380,swings:f.swings,alt:"起点の候補 3 案"}});
+  const f=F.wavestop;
+  draw(document.getElementById("c-ws"), document.getElementById("l-ws"), f.candles,
+    [{{y:f.band,c:"--zone",w:2.5,t:"帯 "+f.band.toFixed(2),k:"抵抗帯"}},
+     {{y:f.stop,c:"--stop",w:2.5,t:"損切り(推進波 1 本分)",k:"損切り = 推進波 1 本分"}},
+     {{y:f.t1,c:"--muted",w:2,dash:"4 4",t:"1 本分",k:"推進波 1 本分"}},
+     {{y:f.t2,c:"--be",w:2.5,dash:"4 4",t:"2 本分 = 2 対 1",k:"推進波 2 本分 = 2 対 1"}}],
+    [{{i:f.entry_at,y:f.entry,c:"--sell",kind:"entry",t:"売り",down:true}}],
+    {{h:380,swings:f.swings,alt:"損切りを推進波 1 本分で取る"}});
 }})();
 </script>'''
     return head + body + script
