@@ -147,6 +147,9 @@ def collect_swing_trades(
     stop_buffer_atr: float = 1.5,
     stop_basis: str = "band",
     stop_wave_mult: float = 1.0,
+    wave_lookback: int = 3,
+    wave_source: str = "structure",
+    wave_spread_max: float = 3.0,
     wave_ref: str = "last",
     min_stop_atr: float = 0.0,
     swing_stop_buffer_atr: float = 0.0,
@@ -215,7 +218,7 @@ def collect_swing_trades(
         raise ValueError(f"fill_bar が不正: {fill_bar!r}")
     if reversal_signal not in ("both", "high_only"):
         raise ValueError(f"reversal_signal が不正: {reversal_signal!r}")
-    if stop_basis not in ("band", "entry", "wave"):
+    if stop_basis not in ("band", "entry", "wave", "recent_waves"):
         raise ValueError(f"stop_basis が不正: {stop_basis!r}")
     if wave_ref not in ("last", "prev"):
         raise ValueError(f"wave_ref が不正: {wave_ref!r}")
@@ -314,6 +317,42 @@ def collect_swing_trades(
                 lo = (sw.index, sw.price)
         return hi, lo
 
+    wave_now: list[float | None] = [None]
+    """このバーで使う「直近の推進波」の大きさ。毎バー入れ替える。
+
+    `place_stop` は呼び出し側が 6 箇所あるので、引数を足すより
+    ここへ置いて共有するほうが取りこぼさない(規則 3)。
+    """
+
+    def recent_wave(d: SwingDetector) -> float | None:
+        """直近 `wave_lookback` 本の波の大きさの平均。**向きは問わない。**
+
+        利用者の定義(2026-09-14):
+
+            推進波 = 高値1・安値0 のような、調整波じゃない方の波。
+            向きは関係ない。大体同じくらいの動きをするだろうという
+            基準でしかないので。
+            **その為、pips が飛んでいるものは参考にせず、
+            エントリーは見送る。**
+            直近の = 指値を置く一つ前、或いは 2 つ前、3 つ前の平均値
+            くらいでいい。必要なのは厳密な数値ではなく参照値。
+
+        だから **確定したスイングを新しい順に隣どうしで引いた幅** を
+        `wave_lookback` 本ぶん平均する。ばらつきが `wave_spread_max`
+        倍を超えたら `None` を返し、呼び出し側は建てない。
+        物差しとして使えない波で損切りを決めても意味がないため。
+        """
+        sw = [x for x in d.swings][-(wave_lookback + 1):]
+        if len(sw) < wave_lookback + 1:
+            return None
+        legs = [abs(sw[k + 1].price - sw[k].price) for k in range(len(sw) - 1)]
+        legs = [w for w in legs if w > 0]
+        if len(legs) < wave_lookback:
+            return None
+        if wave_spread_max and max(legs) > wave_spread_max * min(legs):
+            return None                      # **pips が飛んでいる。見送る**
+        return sum(legs) / len(legs)
+
     def place_stop(entry: float, long_side: bool, a: float, *,
                    band: float | None = None, wave_from: float | None = None,
                    structural: float | None = None) -> float | None:
@@ -343,10 +382,24 @@ def collect_swing_trades(
         順序の仮定だけで符号が変わる領域に入る。
         """
         sign = -1.0 if long_side else 1.0
-        if structural is not None and stop_basis != "entry":
+        # **`recent_waves` では構造の水準を使わない。**利用者:
+        #   「いずれにせよ、指値を置いた場所に対して、その直近の
+        #     推進波を参考にする事に変わりはない」
+        # ここを通すと、ブレイク側が構造の折り返しへ預けたまま
+        # 帯から離れ、幅が中央 7.01 ATR・最大 29.91 ATR まで膨らむ。
+        if structural is not None and stop_basis not in ("entry", "recent_waves"):
             stop = structural
         elif stop_basis == "entry" or band is None:
             stop = entry + sign * stop_buffer_atr * a
+        elif stop_basis == "recent_waves":
+            wave_from = wave_now[0]
+            # **指値を置いた場所に対して、その直近の推進波を参考にする**
+            # (利用者)。帯からではなく約定値から測るので、帯と指値が
+            # 離れても幅は波 1 本分のまま。band 基準だとブレイク側で
+            # 中央 7.01 ATR、最大 29.91 ATR まで膨らんでいた。
+            if wave_from is None or wave_from <= 0:
+                return None
+            stop = entry + sign * stop_wave_mult * wave_from
         elif stop_basis == "wave":
             if wave_from is None:
                 return None
@@ -474,6 +527,11 @@ def collect_swing_trades(
             continue
         st = structure(sdet)
         ex = structure(xdet)
+        # **どの足の波を物差しにするか。**利用者の「見ている足の推進波
+        # 一つ分」。構造を読む足を既定にする(高値切り上げを判定して
+        # いるのがその足なので)。
+        wave_now[0] = (recent_wave(sdet if wave_source == "structure" else xdet)
+                       if stop_basis == "recent_waves" else None)
         moved = s_moved
 
         # --- 損切りを「1 つ前」の折り返しへ引き上げる --------------------
@@ -741,6 +799,17 @@ def collect_swing_trades(
                 # --- 跳ね返り側。帯が死ぬまで生きている ------------------
                 if not dead[key]:
                     xg = ex["last_high"] if long_side else ex["last_low"]
+                    # **注文は帯の手前にしか置かない。**利用者の指摘:
+                    #   「帯に対して向かう様に売りに入っている。抵抗帯
+                    #     という名の通り、抵抗帯の抵抗帯力を信じて買いに
+                    #     入るべき」「買い側でも発動しない様に」
+                    # 帯を越えた側に置くと、その帯はもう抵抗ではなく支持
+                    # で、向かって張ることになる。実測で跳ね返りの 49.1%
+                    # がこれで、期待値は帯の手前 -0.028 に対し -0.138。
+                    if xg is not None and (
+                            (xg.price < level) if long_side
+                            else (xg.price > level)):
+                        xg = None
                     if xg is not None and not (
                             zone_entry_max_atr
                             and abs(xg.price - level) > zone_entry_max_atr * a):

@@ -803,3 +803,97 @@ def test_method_mode_resets_state_when_the_band_moves() -> None:
     # 状態が戻らないと跳ね返りがほぼ消える。ここでは 1 割以上あるはず。
     assert len(fade) / len(z) > 0.10, (
         f"跳ね返りが {len(fade)}/{len(z)} しかない。状態が戻っていない")
+
+
+def _fade_side(t) -> bool:
+    """帯の側と向きが揃っていれば跳ね返り。"""
+    return (t.zone_key == "bottom") == t.long_side
+
+
+def test_method_never_enters_past_the_band_either_direction() -> None:
+    """跳ね返りの注文は、帯を越えた側では発動しない。**両向き。**
+
+    利用者の指摘:
+      「帯に対して向かう様に売りに入っている。抵抗帯という名の通り、
+        抵抗帯の抵抗帯力を信じて買いに入るべき」
+      「買い側でも発動しない様に宜しく頼むよ」
+
+    帯を越えた側で入ると、その帯はもう抵抗ではなく支持になっている。
+    """
+    common = dict(zone_entry="method", zone_entry_max_atr=2.0,
+                  entry_signal="exec", stop_basis="band", stop_buffer_atr=1.5,
+                  min_stop_atr=2.0, max_flips=0, max_adds=0, max_open=4)
+    _, ts = legs(**common)
+    fades = [t for t in ts if t.kind == "zone" and _fade_side(t)]
+    assert fades, "跳ね返りが 1 件も出ていない"
+
+    both = {t.long_side for t in fades}
+    assert both == {True, False}, f"片向きしか出ていない: {both}"
+
+    for t in fades:
+        if t.long_side:
+            assert t.entry >= t.zone_price - 1e-9, (
+                f"支持帯を下抜けた側で買っている: {t.entry} < {t.zone_price}")
+        else:
+            assert t.entry <= t.zone_price + 1e-9, (
+                f"抵抗帯を上抜けた側で売っている: {t.entry} > {t.zone_price}")
+
+
+def test_recent_waves_stop_is_measured_from_the_entry() -> None:
+    """損切りは **指値の位置から** 直近の推進波 1 本分。
+
+    利用者の定義(2026-09-14):
+      推進波 = 調整波じゃない方の波。向きは関係ない。
+      指値を置いた場所に対して、その直近の推進波を参考にする。
+      pips が飛んでいるものは参考にせず、エントリーは見送る。
+
+    帯を基準にすると、帯と指値が離れるほど幅が膨らむ。実測では
+    ブレイク側で中央 7.01 ATR、最大 29.91 ATR まで広がっていた。
+    """
+    common = dict(zone_entry="method", zone_entry_max_atr=2.0,
+                  entry_signal="exec", min_stop_atr=0.0,
+                  max_flips=0, max_adds=0, max_open=4)
+    _, band = legs(**common, stop_basis="band", stop_buffer_atr=1.5)
+    _, wave = legs(**common, stop_basis="recent_waves", stop_wave_mult=1.0)
+    zb = [t for t in band if t.kind == "zone" and t.atr > 0]
+    zw = [t for t in wave if t.kind == "zone" and t.atr > 0]
+    assert zb and zw
+
+    def widths(ts):
+        return sorted(abs(t.entry - t.stop_at_entry) / t.atr for t in ts)
+
+    # **測るのは「帯から離れるほど幅が膨らむか」。**
+    # 帯基準なら距離と幅が連動する。指値基準なら連動しない。
+    def link(ts):
+        import statistics
+        d = [abs(t.entry - t.zone_price) / t.atr for t in ts]
+        w = [abs(t.entry - t.stop_at_entry) / t.atr for t in ts]
+        if len(d) < 30 or statistics.pstdev(d) == 0 or statistics.pstdev(w) == 0:
+            return 0.0
+        md, mw = statistics.fmean(d), statistics.fmean(w)
+        cov = sum((x - md) * (y - mw) for x, y in zip(d, w)) / len(d)
+        return cov / (statistics.pstdev(d) * statistics.pstdev(w))
+
+    lb, lw = link(zb), link(zw)
+    assert lb > 0.5, f"帯基準なのに距離と幅が連動していない: {lb:+.2f}"
+    assert lw < lb - 0.3, (
+        f"指値基準でも帯からの距離に連動している: {lw:+.2f} 対 {lb:+.2f}")
+
+
+def test_wave_reference_skips_when_the_legs_are_erratic() -> None:
+    """波の大きさがばらついていたら、物差しにならないので建てない。
+
+    利用者:「pips が飛んでいるものは参考にせず、エントリーは見送る」。
+    `wave_spread_max` を締めるほど件数が減る、が確かめること。
+    """
+    common = dict(zone_entry="method", zone_entry_max_atr=2.0,
+                  entry_signal="exec", stop_basis="recent_waves",
+                  stop_wave_mult=1.0, min_stop_atr=0.0,
+                  max_flips=0, max_adds=0, max_open=4)
+    counts = []
+    for spread in (1.5, 3.0, 10.0):
+        _, ts = legs(**common, wave_spread_max=spread)
+        counts.append(len([t for t in ts if t.kind == "zone"]))
+    assert counts[0] < counts[-1], (
+        f"ばらつきで絞れていない: {counts}")
+    assert counts[0] <= counts[1] <= counts[2], f"単調でない: {counts}"
